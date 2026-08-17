@@ -3,6 +3,8 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
+import Colors from "../constants/Colors";
+import { OnboardingProvider, useOnboarding } from "../context/OnboardingContext";
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
 
@@ -32,29 +34,44 @@ const tokenCache = {
 };
 
 function InitialLayout() {
-  const { isLoaded, isSignedIn } = useAuth();
-  const segments = useSegments();
+  const { isLoaded: isAuthLoaded, isSignedIn } = useAuth();
+  const { hasCompletedOnboarding, isLoadingOnboarding } = useOnboarding();
+  const segments = useSegments() as string[];
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoaded) return;
+    // Wait for both Clerk auth and Onboarding status to load
+    if (!isAuthLoaded || (isSignedIn && isLoadingOnboarding)) return;
 
     const inTabsGroup = segments[0] === "(tabs)";
     const inAuthGroup = segments[0] === "signin" || segments[0] === "signup";
+    const inOnboarding = segments[0] === "onboarding";
+    const inGenerating = segments[0] === "generating-plan";
 
-    if (isSignedIn && !inTabsGroup) {
-      // Redirect authenticated users to tabs
-      router.replace("/(tabs)");
-    } else if (!isSignedIn && !inAuthGroup) {
+    if (isSignedIn) {
+      if (hasCompletedOnboarding) {
+        // If onboarded and not in tabs, redirect to tabs
+        if (!inTabsGroup) {
+          router.replace("/(tabs)");
+        }
+      } else {
+        // If authenticated but not onboarded, redirect to onboarding (unless already in generating page)
+        if (!inOnboarding && !inGenerating) {
+          router.replace("/onboarding" as any);
+        }
+      }
+    } else if (!inAuthGroup) {
       // Redirect unauthenticated users to sign-in screen
       router.replace("/signin");
     }
-  }, [isSignedIn, isLoaded, segments, router]);
+  }, [isSignedIn, isAuthLoaded, hasCompletedOnboarding, isLoadingOnboarding, segments, router]);
 
-  if (!isLoaded) {
+  const showLoading = !isAuthLoaded || (isSignedIn && (isLoadingOnboarding || hasCompletedOnboarding === null));
+
+  if (showLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0D0E12" }}>
-        <ActivityIndicator size="large" color="#6366F1" />
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: Colors.dark.background }}>
+        <ActivityIndicator size="large" color={Colors.dark.primary} />
       </View>
     );
   }
@@ -63,6 +80,8 @@ function InitialLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="signin" />
       <Stack.Screen name="signup" />
+      <Stack.Screen name="onboarding" />
+      <Stack.Screen name="generating-plan" />
       <Stack.Screen name="(tabs)" />
     </Stack>
   );
@@ -72,7 +91,9 @@ export default function RootLayout() {
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
       <ClerkLoaded>
-        <InitialLayout />
+        <OnboardingProvider>
+          <InitialLayout />
+        </OnboardingProvider>
       </ClerkLoaded>
     </ClerkProvider>
   );

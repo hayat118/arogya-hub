@@ -1,6 +1,6 @@
 import { useUser } from "@clerk/expo";
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Image,
   ScrollView,
@@ -9,28 +9,51 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Colors from "../../constants/Colors";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function Dashboard() {
   const { user } = useUser();
 
-  // Mock targets for nutrition (can be loaded from Firestore later)
-  const targetCalories = 2000;
+  const [targetCalories, setTargetCalories] = useState(2000);
+  const [targetProtein, setTargetProtein] = useState(150);
+  const [targetCarbs, setTargetCarbs] = useState(200);
+  const [targetFats, setTargetFats] = useState(70);
+  const [targetWater, setTargetWater] = useState(3.0);
+  const [aiAdvice, setAiAdvice] = useState("");
+
+  useEffect(() => {
+    async function loadTargets() {
+      if (!user) return;
+      try {
+        const stored = await AsyncStorage.getItem(`onboarding_data_${user.id}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed.targetCalories) setTargetCalories(Number(parsed.targetCalories));
+          if (parsed.targetProtein) setTargetProtein(Number(parsed.targetProtein));
+          if (parsed.targetCarbs) setTargetCarbs(Number(parsed.targetCarbs));
+          if (parsed.targetFats) setTargetFats(Number(parsed.targetFats));
+          if (parsed.targetWater) setTargetWater(Number(parsed.targetWater));
+          if (parsed.aiAdvice) setAiAdvice(parsed.aiAdvice);
+        }
+      } catch (error) {
+        console.error("Failed to load calorie targets from AsyncStorage:", error);
+      }
+    }
+    loadTargets();
+  }, [user]);
+
   const consumedCalories = 1250;
-  const remainingCalories = targetCalories - consumedCalories;
+  const remainingCalories = Math.max(0, targetCalories - consumedCalories);
 
-  const targetProtein = 150; // grams
   const consumedProtein = 95;
-
-  const targetCarbs = 200; // grams
   const consumedCarbs = 110;
-
-  const targetFats = 70; // grams
   const consumedFats = 42;
 
   // Percentage calculations
-  const proteinPercent = consumedProtein / targetProtein;
-  const carbsPercent = consumedCarbs / targetCarbs;
-  const fatsPercent = consumedFats / targetFats;
+  const proteinPercent = Math.min(1, consumedProtein / targetProtein);
+  const carbsPercent = Math.min(1, consumedCarbs / targetCarbs);
+  const fatsPercent = Math.min(1, consumedFats / targetFats);
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -109,9 +132,35 @@ export default function Dashboard() {
             </Text>
           </View>
           <View style={styles.progressTrack}>
-            <View style={[styles.progressBar, { width: `${fatsPercent * 100}%`, backgroundColor: "#EF4444" }]} />
+            <View style={[styles.progressBar, { width: `${fatsPercent * 100}%`, backgroundColor: Colors.dark.error }]} />
           </View>
         </View>
+      </View>
+
+      {/* AI Daily Advice & Hydration */}
+      <Text style={styles.sectionTitle}>AI Target & Insights</Text>
+      <View style={styles.insightsContainer}>
+        {/* Hydration Card */}
+        <View style={styles.insightCard}>
+          <View style={styles.insightIconFrame}>
+            <Ionicons name="water" size={22} color="#3B82F6" />
+          </View>
+          <View style={styles.insightTextContainer}>
+            <Text style={styles.insightValue}>{targetWater} Liters</Text>
+            <Text style={styles.insightLabel}>Recommended Daily Water Intake</Text>
+          </View>
+        </View>
+
+        {/* AI Advice Card */}
+        {aiAdvice ? (
+          <View style={styles.adviceCard}>
+            <View style={styles.adviceHeader}>
+              <Ionicons name="sparkles" size={16} color={Colors.dark.primary} />
+              <Text style={styles.adviceTitle}>AI COACH INSIGHT</Text>
+            </View>
+            <Text style={styles.adviceText}>{aiAdvice}</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Quick Meal Log Buttons */}
@@ -121,14 +170,14 @@ export default function Dashboard() {
           <TouchableOpacity key={meal} style={styles.mealRow} activeOpacity={0.7}>
             <View style={styles.mealInfo}>
               <View style={styles.mealIconFrame}>
-                <Ionicons name="restaurant-outline" size={18} color="#6366F1" />
+                <Ionicons name="restaurant-outline" size={18} color={Colors.dark.primary} />
               </View>
               <View>
                 <Text style={styles.mealName}>{meal}</Text>
                 <Text style={styles.mealSubtitle}>No foods logged yet</Text>
               </View>
             </View>
-            <Ionicons name="add-circle" size={24} color="#6366F1" />
+            <Ionicons name="add-circle" size={24} color={Colors.dark.primary} />
           </TouchableOpacity>
         ))}
       </View>
@@ -142,7 +191,7 @@ export default function Dashboard() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0A0B0F",
+    backgroundColor: Colors.dark.background,
     paddingHorizontal: 20,
     paddingTop: 16,
   },
@@ -156,11 +205,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   welcomeText: {
-    color: "#6B7280",
+    color: Colors.dark.textMuted,
     fontSize: 14,
   },
   nameText: {
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     fontSize: 22,
     fontWeight: "bold",
   },
@@ -169,10 +218,10 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     borderWidth: 1.5,
-    borderColor: "#6366F1",
+    borderColor: Colors.dark.primary,
   },
   glassCard: {
-    backgroundColor: "#161821",
+    backgroundColor: Colors.dark.surface,
     borderRadius: 28,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.04)",
@@ -190,9 +239,9 @@ const styles = StyleSheet.create({
     height: 140,
     borderRadius: 70,
     borderWidth: 10,
-    borderColor: "rgba(99, 102, 241, 0.1)",
-    borderLeftColor: "#6366F1",
-    borderTopColor: "#6366F1",
+    borderColor: "rgba(41, 143, 80, 0.08)",
+    borderLeftColor: Colors.dark.primary,
+    borderTopColor: Colors.dark.primary,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 20,
@@ -201,12 +250,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   remainingNumber: {
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     fontSize: 28,
     fontWeight: "bold",
   },
   remainingLabel: {
-    color: "#6B7280",
+    color: Colors.dark.textMuted,
     fontSize: 12,
     marginTop: 2,
   },
@@ -225,24 +274,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   statValue: {
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     fontSize: 16,
     fontWeight: "bold",
     marginTop: 4,
   },
   statLabel: {
-    color: "#6B7280",
+    color: Colors.dark.textMuted,
     fontSize: 12,
   },
   sectionTitle: {
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 16,
     marginTop: 8,
   },
   macrosContainer: {
-    backgroundColor: "#161821",
+    backgroundColor: Colors.dark.surface,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.04)",
@@ -258,12 +307,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   macroName: {
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     fontSize: 14,
     fontWeight: "500",
   },
   macroRatio: {
-    color: "#9CA3AF",
+    color: Colors.dark.textSecondary,
     fontSize: 13,
   },
   progressTrack: {
@@ -284,7 +333,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#161821",
+    backgroundColor: Colors.dark.surface,
     borderRadius: 18,
     padding: 16,
     marginBottom: 12,
@@ -299,19 +348,81 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: "rgba(99, 102, 241, 0.08)",
+    backgroundColor: "rgba(41, 143, 80, 0.08)",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
   },
   mealName: {
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     fontSize: 15,
     fontWeight: "600",
   },
   mealSubtitle: {
-    color: "#6B7280",
+    color: Colors.dark.textMuted,
     fontSize: 12,
     marginTop: 2,
+  },
+  insightsContainer: {
+    flexDirection: "column",
+    gap: 16,
+    marginBottom: 24,
+  },
+  insightCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.04)",
+    padding: 16,
+  },
+  insightIconFrame: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "rgba(59, 130, 246, 0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(59, 130, 246, 0.12)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 14,
+  },
+  insightTextContainer: {
+    flex: 1,
+  },
+  insightValue: {
+    color: Colors.dark.text,
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  insightLabel: {
+    color: Colors.dark.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  adviceCard: {
+    backgroundColor: "rgba(41, 143, 80, 0.03)",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(41, 143, 80, 0.1)",
+    padding: 18,
+  },
+  adviceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  adviceTitle: {
+    color: Colors.dark.primary,
+    fontSize: 11,
+    fontWeight: "bold",
+    letterSpacing: 0.5,
+  },
+  adviceText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
   },
 });
