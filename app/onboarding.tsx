@@ -302,7 +302,7 @@ export default function Onboarding() {
           {/* Step 2: Goal */}
           {step === 2 && (
             <View style={styles.stepContainer}>
-              <Text style={styles.title}>What's your goal?</Text>
+              <Text style={styles.title}>{"What's your goal?"}</Text>
               <Text style={styles.subtitle}>Select the primary outcome you want to achieve.</Text>
 
               <View style={styles.listContainer}>
@@ -493,7 +493,7 @@ export default function Onboarding() {
           {/* Step 4: Birth Date */}
           {step === 4 && (
             <View style={styles.stepContainer}>
-              <Text style={styles.title}>When's your birthday?</Text>
+              <Text style={styles.title}>{"When's your birthday?"}</Text>
               <Text style={styles.subtitle}>We calculate metabolic baselines based on your age.</Text>
 
               <View style={styles.centerIconContainer}>
