@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import React, { useState } from "react";
+import Colors from "../constants/Colors";
 import {
   ActivityIndicator,
   Alert,
@@ -107,11 +108,11 @@ export default function SignIn() {
               <Text style={styles.inputLabel}>Email Address</Text>
             </View>
             <View style={styles.inputWrapper}>
-              <Ionicons name="mail-outline" size={20} color="#6B7280" style={styles.inputIcon} />
+              <Ionicons name="mail-outline" size={20} color={Colors.dark.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="Enter your email"
-                placeholderTextColor="#6B7280"
+                placeholderTextColor={Colors.dark.textMuted}
                 value={email}
                 onChangeText={setEmail}
                 autoCapitalize="none"
@@ -124,11 +125,11 @@ export default function SignIn() {
               <Text style={styles.inputLabel}>Password</Text>
             </View>
             <View style={styles.inputWrapper}>
-              <Ionicons name="lock-closed-outline" size={20} color="#6B7280" style={styles.inputIcon} />
+              <Ionicons name="lock-closed-outline" size={20} color={Colors.dark.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="Enter your password"
-                placeholderTextColor="#6B7280"
+                placeholderTextColor={Colors.dark.textMuted}
                 secureTextEntry={!isPasswordVisible}
                 value={password}
                 onChangeText={setPassword}
@@ -141,7 +142,7 @@ export default function SignIn() {
                 <Ionicons
                   name={isPasswordVisible ? "eye-off-outline" : "eye-outline"}
                   size={20}
-                  color="#6B7280"
+                  color={Colors.dark.textMuted}
                 />
               </TouchableOpacity>
             </View>
@@ -153,11 +154,11 @@ export default function SignIn() {
               disabled={isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator color="#FFF" />
+                <ActivityIndicator color={Colors.dark.white} />
               ) : (
                 <View style={styles.buttonContent}>
                   <Text style={styles.primaryButtonText}>Sign In</Text>
-                  <Ionicons name="arrow-forward" size={18} color="#FFF" style={{ marginLeft: 8 }} />
+                  <Ionicons name="arrow-forward" size={18} color={Colors.dark.white} style={{ marginLeft: 8 }} />
                 </View>
               )}
             </TouchableOpacity>
@@ -174,7 +175,7 @@ export default function SignIn() {
               onPress={handleGoogleSignIn}
               disabled={isLoading}
             >
-              <Ionicons name="logo-google" size={20} color="#1F2937" style={{ marginRight: 10 }} />
+              <Ionicons name="logo-google" size={20} color={Colors.dark.googleText} style={{ marginRight: 10 }} />
               <Text style={styles.googleButtonText}>Sign in with Google</Text>
             </TouchableOpacity>
           </View>
@@ -197,7 +198,7 @@ export default function SignIn() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0A0B0F",
+    backgroundColor: Colors.dark.background,
   },
   keyboardView: {
     flex: 1,
@@ -222,7 +223,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 16,
-    shadowColor: "#6366F1",
+    shadowColor: Colors.dark.primary,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,
     shadowRadius: 16,
@@ -235,19 +236,19 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: "bold",
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     letterSpacing: 0.5,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 14,
-    color: "#9CA3AF",
+    color: Colors.dark.textSecondary,
     textAlign: "center",
     paddingHorizontal: 16,
     lineHeight: 20,
   },
   formCard: {
-    backgroundColor: "#161821",
+    backgroundColor: Colors.dark.surface,
     borderRadius: 28,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.04)",
@@ -261,7 +262,7 @@ const styles = StyleSheet.create({
   cardHeader: {
     fontSize: 20,
     fontWeight: "600",
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     marginBottom: 20,
   },
   inputLabelContainer: {
@@ -272,13 +273,13 @@ const styles = StyleSheet.create({
   },
   inputLabel: {
     fontSize: 13,
-    color: "#D1D5DB",
+    color: Colors.dark.textSecondary,
     fontWeight: "500",
   },
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#0D0E12",
+    backgroundColor: Colors.dark.surfaceDarker,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.06)",
@@ -291,20 +292,20 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    color: "#FFFFFF",
+    color: Colors.dark.text,
     fontSize: 15,
   },
   eyeIcon: {
     padding: 4,
   },
   primaryButton: {
-    backgroundColor: "#6366F1",
+    backgroundColor: Colors.dark.primary,
     borderRadius: 18,
     height: 56,
     justifyContent: "center",
     alignItems: "center",
     marginTop: 20,
-    shadowColor: "#6366F1",
+    shadowColor: Colors.dark.primary,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
@@ -315,7 +316,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   primaryButtonText: {
-    color: "#FFFFFF",
+    color: Colors.dark.white,
     fontSize: 16,
     fontWeight: "600",
   },
@@ -330,22 +331,22 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.08)",
   },
   dividerText: {
-    color: "#6B7280",
+    color: Colors.dark.textMuted,
     fontSize: 13,
     paddingHorizontal: 12,
   },
   googleButton: {
     flexDirection: "row",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: Colors.dark.white,
     borderRadius: 18,
     height: 56,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: Colors.dark.googleBorder,
   },
   googleButtonText: {
-    color: "#1F2937",
+    color: Colors.dark.googleText,
     fontSize: 15,
     fontWeight: "600",
   },
@@ -356,11 +357,11 @@ const styles = StyleSheet.create({
     marginTop: 32,
   },
   footerText: {
-    color: "#9CA3AF",
+    color: Colors.dark.textSecondary,
     fontSize: 14,
   },
   footerLink: {
-    color: "#8B5CF6",
+    color: Colors.dark.primary,
     fontSize: 14,
     fontWeight: "600",
   },

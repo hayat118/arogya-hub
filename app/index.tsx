@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
+import Colors from "../constants/Colors";
 
 export default function Index() {
   const { isLoaded, isSignedIn } = useAuth();
@@ -51,8 +52,8 @@ export default function Index() {
   // Show loading indicator only while checking both storage mechanisms
   if (!isLoaded && (!localSessionChecked || !hasLocalSession)) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0A0B0F" }}>
-        <ActivityIndicator size="large" color="#6366F1" />
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: Colors.dark.background }}>
+        <ActivityIndicator size="large" color={Colors.dark.primary} />
       </View>
     );
   }

@@ -4,6 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Tabs } from "expo-router";
 import React, { useEffect } from "react";
 import { StyleSheet, TouchableOpacity } from "react-native";
+import Colors from "../../constants/Colors";
 import { saveUserProfile } from "../../services/firebase";
 
 export default function TabsLayout() {
@@ -52,33 +53,33 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: true,
         headerStyle: {
-          backgroundColor: "#161821",
+          backgroundColor: Colors.dark.surface,
           borderBottomWidth: 1,
           borderBottomColor: "rgba(255, 255, 255, 0.05)",
           height: 90,
         },
         headerTitleStyle: {
-          color: "#FFFFFF",
+          color: Colors.dark.text,
           fontSize: 18,
           fontWeight: "bold",
         },
         tabBarStyle: {
-          backgroundColor: "#161821",
+          backgroundColor: Colors.dark.surface,
           borderTopWidth: 1,
           borderTopColor: "rgba(255, 255, 255, 0.05)",
           height: 64,
           paddingBottom: 8,
           paddingTop: 8,
         },
-        tabBarActiveTintColor: "#6366F1",
-        tabBarInactiveTintColor: "#6B7280",
+        tabBarActiveTintColor: Colors.dark.primary,
+        tabBarInactiveTintColor: Colors.dark.textMuted,
         headerRight: () => (
           <TouchableOpacity
             onPress={() => signOut()}
             style={styles.logoutButton}
             activeOpacity={0.7}
           >
-            <Ionicons name="log-out-outline" size={22} color="#EF4444" />
+            <Ionicons name="log-out-outline" size={22} color={Colors.dark.error} />
           </TouchableOpacity>
         ),
       }}

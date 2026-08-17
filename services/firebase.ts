@@ -58,3 +58,41 @@ export async function saveUserProfile(
     throw error;
   }
 }
+
+/**
+ * Retrieves user profile from Firestore.
+ */
+export async function getUserProfile(userId: string) {
+  try {
+    const userDocRef = doc(db, "users", userId);
+    const userDocSnap = await getDoc(userDocRef);
+    if (userDocSnap.exists()) {
+      return userDocSnap.data();
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching user profile from Firestore:", error);
+    return null;
+  }
+}
+
+/**
+ * Updates an existing user profile with onboarding data or other custom fields.
+ */
+export async function updateUserProfile(userId: string, data: any) {
+  try {
+    const userDocRef = doc(db, "users", userId);
+    await setDoc(
+      userDocRef,
+      {
+        ...data,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    console.log("User profile successfully updated in Firestore:", userId);
+  } catch (error) {
+    console.error("Error updating user profile in Firestore:", error);
+    throw error;
+  }
+}
