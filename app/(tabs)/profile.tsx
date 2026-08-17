@@ -14,7 +14,7 @@ import {
   Settings01Icon,
 } from "@hugeicons/core-free-icons";
 
-export default function Settings() {
+export default function Profile() {
   const { user } = useUser();
   const [profileData, setProfileData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +29,7 @@ export default function Settings() {
           }
         }
       } catch (error) {
-        console.error("Error loading settings profile data:", error);
+        console.error("Error loading profile tab data:", error);
       } finally {
         setLoading(false);
       }
@@ -148,7 +148,7 @@ export default function Settings() {
           <HugeiconsIcon icon={Settings01Icon} size={24} color={Colors.dark.textMuted} />
         </View>
         <Text style={styles.subtitle}>
-          Configure your daily calorie limits, protein/carb targets, and connect your personal API keys here.
+          Manage your personal information, physical targets, and health settings here.
         </Text>
       </View>
     </ScrollView>
@@ -163,7 +163,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 24,
     paddingTop: 24,
-    paddingBottom: 40,
+    paddingBottom: 120, // Add bottom padding to account for floating tab bar
   },
   profileHeader: {
     alignItems: "center",

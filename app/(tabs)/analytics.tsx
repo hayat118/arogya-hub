@@ -3,15 +3,15 @@ import { StyleSheet, Text, View, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "../../constants/Colors";
 
-export default function AICoach() {
+export default function Analytics() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.iconFrame}>
-        <Ionicons name="chatbubble-ellipses-outline" size={48} color={Colors.dark.primary} />
+        <Ionicons name="bar-chart-outline" size={48} color={Colors.dark.primary} />
       </View>
-      <Text style={styles.title}>AI Nutritionist Coach</Text>
+      <Text style={styles.title}>Fitness Analytics</Text>
       <Text style={styles.subtitle}>
-        Chat with your personalized AI nutritionist. Get customized diet tips, food alternatives, and recipes.
+        Analyze your nutritional intake, calorie trends, and workout progress over time. Graph summaries will appear here.
       </Text>
     </ScrollView>
   );
@@ -27,6 +27,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 32,
+    paddingBottom: 120, // Bottom padding to account for the floating tab bar
   },
   iconFrame: {
     width: 96,

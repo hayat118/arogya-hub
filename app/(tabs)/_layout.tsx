@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Tabs } from "expo-router";
 import React, { useEffect } from "react";
-import { StyleSheet, TouchableOpacity } from "react-native";
+import { StyleSheet, TouchableOpacity, View } from "react-native";
 import Colors from "../../constants/Colors";
 import { saveUserProfile } from "../../services/firebase";
 
@@ -64,15 +64,30 @@ export default function TabsLayout() {
           fontWeight: "bold",
         },
         tabBarStyle: {
+          position: "absolute",
+          bottom: 24,
+          left: 16,
+          right: 16,
+          borderRadius: 24,
           backgroundColor: Colors.dark.surface,
-          borderTopWidth: 1,
-          borderTopColor: "rgba(255, 255, 255, 0.05)",
-          height: 64,
-          paddingBottom: 8,
-          paddingTop: 8,
+          borderTopWidth: 0,
+          height: 72,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.35,
+          shadowRadius: 16,
+          elevation: 10,
         },
         tabBarActiveTintColor: Colors.dark.primary,
         tabBarInactiveTintColor: Colors.dark.textMuted,
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: "600",
+          marginBottom: 10,
+        },
+        tabBarIconStyle: {
+          marginTop: 6,
+        },
         headerRight: () => (
           <TouchableOpacity
             onPress={() => signOut()}
@@ -87,40 +102,50 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Dashboard",
-          tabBarLabel: "Dashboard",
+          title: "Home",
+          tabBarLabel: "Home",
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "stats-chart" : "stats-chart-outline"} size={22} color={color} />
+            <Ionicons name={focused ? "home" : "home-outline"} size={22} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="history"
+        name="analytics"
         options={{
-          title: "History",
-          tabBarLabel: "History",
+          title: "Analytics",
+          tabBarLabel: "Analytics",
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "calendar" : "calendar-outline"} size={22} color={color} />
+            <Ionicons name={focused ? "bar-chart" : "bar-chart-outline"} size={22} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="ai-coach"
+        name="profile"
         options={{
-          title: "AI Coach",
-          tabBarLabel: "Coach",
+          title: "Profile",
+          tabBarLabel: "Profile",
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "chatbubble-ellipses" : "chatbubble-ellipses-outline"} size={22} color={color} />
+            <Ionicons name={focused ? "person" : "person-outline"} size={22} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="settings"
+        name="plus"
         options={{
-          title: "Settings",
-          tabBarLabel: "Settings",
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? "settings" : "settings-outline"} size={22} color={color} />
+          title: "Log",
+          tabBarLabel: () => null,
+          tabBarButton: () => (
+            <TouchableOpacity
+              onPress={() => {
+                alert("Log Food & Activity coming soon!");
+              }}
+              style={styles.plusButtonContainer}
+              activeOpacity={0.85}
+            >
+              <View style={styles.plusButton}>
+                <Ionicons name="add" size={26} color={Colors.dark.white} />
+              </View>
+            </TouchableOpacity>
           ),
         }}
       />
@@ -136,5 +161,24 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(239, 68, 68, 0.06)",
     borderWidth: 1,
     borderColor: "rgba(239, 68, 68, 0.12)",
+  },
+  plusButtonContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    height: 72,
+  },
+  plusButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: Colors.dark.primary,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: Colors.dark.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
   },
 });
