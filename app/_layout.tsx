@@ -47,11 +47,16 @@ function InitialLayout() {
     const inAuthGroup = segments[0] === "signin" || segments[0] === "signup";
     const inOnboarding = segments[0] === "onboarding";
     const inGenerating = segments[0] === "generating-plan";
+    const isAllowedOutsideTabs =
+      segments[0] === "log-exercise-options" ||
+      segments[0] === "log-exercise-details" ||
+      segments[0] === "log-exercise-manual" ||
+      segments[0] === "workout-summary";
 
     if (isSignedIn) {
       if (hasCompletedOnboarding) {
-        // If onboarded and not in tabs, redirect to tabs
-        if (!inTabsGroup) {
+        // If onboarded and not in tabs or allowed screens, redirect to tabs
+        if (!inTabsGroup && !isAllowedOutsideTabs) {
           router.replace("/(tabs)");
         }
       } else {
@@ -83,6 +88,10 @@ function InitialLayout() {
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="generating-plan" />
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="log-exercise-options" />
+      <Stack.Screen name="log-exercise-details" />
+      <Stack.Screen name="log-exercise-manual" />
+      <Stack.Screen name="workout-summary" />
     </Stack>
   );
 }
