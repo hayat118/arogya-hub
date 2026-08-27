@@ -129,7 +129,21 @@ export default function Dashboard() {
           id: doc.id,
           ...doc.data(),
         }));
-        setLogs(fetchedLogs);
+
+        // Sort logs: oldest first, recent at the bottom
+        const getLogTime = (log: any) => {
+          if (!log.createdAt) return Date.now(); // pending writes/local state updates default to most recent
+          if (log.createdAt.seconds) return log.createdAt.seconds * 1000;
+          if (log.createdAt.toDate && typeof log.createdAt.toDate === "function") {
+            return log.createdAt.toDate().getTime();
+          }
+          const parsed = new Date(log.createdAt).getTime();
+          return isNaN(parsed) ? Date.now() : parsed;
+        };
+
+        const sortedLogs = fetchedLogs.sort((a, b) => getLogTime(a) - getLogTime(b));
+
+        setLogs(sortedLogs);
         setIsLoadingLogs(false);
       },
       (error) => {
@@ -687,33 +701,46 @@ export default function Dashboard() {
                   );
                 } else if (log.type === "water") {
                   return (
-                    <View key={log.id} style={styles.mealRow}>
-                      <View style={styles.mealInfo}>
-                        <View style={[styles.mealIconFrame, { backgroundColor: "rgba(59, 130, 246, 0.08)", borderColor: "rgba(59, 130, 246, 0.15)", borderWidth: 1 }]}>
-                          <Ionicons name="water" size={18} color="#3B82F6" />
-                        </View>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                          <Text style={styles.mealName} numberOfLines={1}>
-                            Water Intake
-                          </Text>
-                          <Text style={styles.mealSubtitle}>
-                            Logged {(log.amount * 1000).toFixed(0)} ml
-                          </Text>
-                        </View>
+                    <View key={log.id} style={styles.workoutCard}>
+                      {/* Big Icon on Left */}
+                      <View style={[styles.workoutIconFrame, { backgroundColor: "rgba(59, 130, 246, 0.08)", borderColor: "rgba(59, 130, 246, 0.15)", borderWidth: 1 }]}>
+                        <Ionicons name="water" size={24} color="#3B82F6" />
                       </View>
 
-                      <View style={styles.logActionCol}>
-                        <Text style={[styles.logCaloriesVal, { color: "#3B82F6" }]}>
-                          {log.amount} L
+                      {/* Content on Right of Icon */}
+                      <View style={styles.workoutDetails}>
+                        {/* Title */}
+                        <Text style={styles.workoutTitle} numberOfLines={1}>
+                          Water Intake
                         </Text>
-                        <TouchableOpacity
-                          onPress={() => handleDeleteLog(log.id, "Water Intake")}
-                          style={styles.deleteLogBtn}
-                          activeOpacity={0.7}
-                        >
-                          <Ionicons name="trash-outline" size={14} color={Colors.dark.error} />
-                        </TouchableOpacity>
+
+                        {/* Volume Row */}
+                        <View style={styles.workoutCalRow}>
+                          <Ionicons name="water" size={14} color="#3B82F6" />
+                          <Text style={[styles.workoutCalText, { color: "#3B82F6" }]}>
+                            {(log.amount * 1000).toFixed(0)} ml
+                          </Text>
+                        </View>
+
+                        {/* Metadata row */}
+                        <Text style={styles.workoutMetaText} numberOfLines={1}>
+                          Hydration Log • {log.amount} L
+                        </Text>
                       </View>
+
+                      {/* Log Time at top right corner */}
+                      <Text style={styles.workoutTimeText}>
+                        {formatLogTime(log.createdAt)}
+                      </Text>
+
+                      {/* Delete button positioned nicely */}
+                      <TouchableOpacity
+                        onPress={() => handleDeleteLog(log.id, "Water Intake")}
+                        style={styles.workoutDeleteBtn}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="trash-outline" size={12} color={Colors.dark.error} />
+                      </TouchableOpacity>
                     </View>
                   );
                 }
