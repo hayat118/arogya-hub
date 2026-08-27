@@ -280,10 +280,10 @@ export default function TabsLayout() {
                 <TouchableOpacity
                   style={styles.card}
                   onPress={() => {
-                    menuNavigationState.shouldShowMenuOnReturn = true;
-                    router.push({ pathname: "/(tabs)/plus", params: { type: "water" } });
+                    menuNavigationState.shouldShowMenuOnReturn = false;
+                    router.push("/log-water");
                   }}
-                  activeOpacity={0.85}
+                  activeOpacity={0.855}
                 >
                   <View style={[styles.cardIconFrame, { backgroundColor: "rgba(59, 130, 246, 0.08)" }]}>
                     <Ionicons name="water-sharp" size={22} color="#3B82F6" />
