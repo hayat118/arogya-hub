@@ -298,8 +298,8 @@ export default function TabsLayout() {
                 <TouchableOpacity
                   style={styles.card}
                   onPress={() => {
-                    menuNavigationState.shouldShowMenuOnReturn = true;
-                    router.push({ pathname: "/(tabs)/plus", params: { type: "meal" } });
+                    menuNavigationState.shouldShowMenuOnReturn = false;
+                    router.push("/food-search");
                   }}
                   activeOpacity={0.85}
                 >

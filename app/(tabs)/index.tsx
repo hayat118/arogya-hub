@@ -57,6 +57,7 @@ export default function Dashboard() {
   };
 
   const [selectedDateId, setSelectedDateId] = useState(getTodayDateString());
+  const isPastDate = selectedDateId < getTodayDateString();
   const [targetCalories, setTargetCalories] = useState(2000);
   const [targetProtein, setTargetProtein] = useState(150);
   const [targetCarbs, setTargetCarbs] = useState(200);
@@ -296,7 +297,10 @@ export default function Dashboard() {
 
   const remainingCalories = Math.max(0, targetCalories - consumedCalories + burnedCalories);
   const remainingPercent = targetCalories > 0 ? Math.round((remainingCalories / targetCalories) * 100) : 0;
-  const consumedPercent = targetCalories > 0 ? Math.min(1, consumedCalories / targetCalories) : 0;
+
+  // Calculate consumed percent based on Net Calories (Eaten - Burned) for progressive ring adjustments
+  const netCalories = Math.max(0, consumedCalories - burnedCalories);
+  const consumedPercent = targetCalories > 0 ? Math.min(1, netCalories / targetCalories) : 0;
 
   const consumedProtein = logs
     .filter((log) => log.type === "meal")
@@ -310,6 +314,15 @@ export default function Dashboard() {
     .filter((log) => log.type === "meal")
     .reduce((sum, log) => sum + (log.fats || 0), 0);
 
+  // Allow percents to exceed 1.0 (for correct text outputs >100%)
+  const proteinPercent = targetProtein > 0 ? consumedProtein / targetProtein : 0;
+  const carbsPercent = targetCarbs > 0 ? consumedCarbs / targetCarbs : 0;
+  const fatsPercent = targetFats > 0 ? consumedFats / targetFats : 0;
+
+  const proteinPercentageText = Math.round(proteinPercent * 100);
+  const carbsPercentageText = Math.round(carbsPercent * 100);
+  const fatsPercentageText = Math.round(fatsPercent * 100);
+
   // Water calculations
   const consumedWater = logs
     .filter((log) => log.type === "water")
@@ -318,15 +331,6 @@ export default function Dashboard() {
   const consumedGlasses = consumedWater / 0.25;
   const targetGlasses = Math.min(16, Math.ceil(targetWater / 0.25));
   const glassesLeft = Math.max(0, (targetWater / 0.25) - consumedGlasses);
-
-  // Percentage calculations
-  const proteinPercent = Math.min(1, consumedProtein / targetProtein);
-  const carbsPercent = Math.min(1, consumedCarbs / targetCarbs);
-  const fatsPercent = Math.min(1, consumedFats / targetFats);
-
-  const proteinPercentageText = Math.round(proteinPercent * 100);
-  const carbsPercentageText = Math.round(carbsPercent * 100);
-  const fatsPercentageText = Math.round(fatsPercent * 100);
 
   return (
     <View style={styles.rootContainer}>
@@ -376,7 +380,7 @@ export default function Dashboard() {
 
               <View style={styles.ringInfo}>
                 <Text style={styles.remainingNumber}>{remainingCalories}</Text>
-                <Text style={styles.remainingLabel}>kcal remaining</Text>
+                <Text style={styles.remainingLabel}>Cal remaining</Text>
                 <Text style={styles.remainingPercent}>{remainingPercent}% left</Text>
               </View>
             </View>
@@ -391,7 +395,7 @@ export default function Dashboard() {
               </View>
               <View style={styles.statCol}>
                 <Ionicons name="barbell-outline" size={18} color="#10B981" />
-                <Text style={styles.statValue}>350</Text>
+                <Text style={styles.statValue}>{burnedCalories}</Text>
                 <Text style={styles.statLabel}>Active Burned</Text>
               </View>
             </View>
@@ -409,7 +413,7 @@ export default function Dashboard() {
                   <Text style={styles.macroVerticalRatio}>{consumedProtein}/{targetProtein}g</Text>
                 </View>
                 <View style={styles.macroProgressTrack}>
-                  <View style={[styles.macroProgressBar, { width: `${proteinPercent * 100}%`, backgroundColor: "#8B5CF6" }]} />
+                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(proteinPercent * 100))}%`, backgroundColor: "#8B5CF6" }]} />
                 </View>
               </View>
 
@@ -423,7 +427,7 @@ export default function Dashboard() {
                   <Text style={styles.macroVerticalRatio}>{consumedCarbs}/{targetCarbs}g</Text>
                 </View>
                 <View style={styles.macroProgressTrack}>
-                  <View style={[styles.macroProgressBar, { width: `${carbsPercent * 100}%`, backgroundColor: "#3B82F6" }]} />
+                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(carbsPercent * 100))}%`, backgroundColor: "#3B82F6" }]} />
                 </View>
               </View>
 
@@ -437,7 +441,7 @@ export default function Dashboard() {
                   <Text style={styles.macroVerticalRatio}>{consumedFats}/{targetFats}g</Text>
                 </View>
                 <View style={styles.macroProgressTrack}>
-                  <View style={[styles.macroProgressBar, { width: `${fatsPercent * 100}%`, backgroundColor: Colors.dark.error }]} />
+                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(fatsPercent * 100))}%`, backgroundColor: Colors.dark.error }]} />
                 </View>
               </View>
             </View>
@@ -598,33 +602,46 @@ export default function Dashboard() {
               logs.map((log) => {
                 if (log.type === "meal") {
                   return (
-                    <View key={log.id} style={styles.mealRow}>
-                      <View style={styles.mealInfo}>
-                        <View style={styles.mealIconFrame}>
-                          <Ionicons name="restaurant-outline" size={18} color={Colors.dark.primary} />
-                        </View>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                          <Text style={styles.mealName} numberOfLines={1}>
-                            {log.title}
-                          </Text>
-                          <Text style={styles.mealSubtitle}>
-                            P: {log.protein || 0}g • C: {log.carbs || 0}g • F: {log.fats || 0}g
-                          </Text>
-                        </View>
+                    <View key={log.id} style={styles.workoutCard}>
+                      {/* Big Icon on Left */}
+                      <View style={[styles.workoutIconFrame, { backgroundColor: "rgba(41, 143, 80, 0.08)", borderColor: "rgba(41, 143, 80, 0.15)", borderWidth: 1 }]}>
+                        <Ionicons name="restaurant-outline" size={24} color="#298F50" />
                       </View>
 
-                      <View style={styles.logActionCol}>
-                        <Text style={styles.logCaloriesVal}>
-                          +{log.calories} kcal
+                      {/* Content on Right of Icon */}
+                      <View style={styles.workoutDetails}>
+                        {/* Title */}
+                        <Text style={styles.workoutTitle} numberOfLines={1}>
+                          Food: {log.title}
                         </Text>
+
+                        {/* Calories Row */}
+                        <View style={styles.workoutCalRow}>
+                          <Ionicons name="flame" size={14} color="#EF4444" />
+                          <Text style={styles.workoutCalText}>{log.calories} Cals</Text>
+                        </View>
+
+                        {/* Metadata row with serving size and macronutrients */}
+                        <Text style={styles.workoutMetaText} numberOfLines={1}>
+                          {log.servingSize ? `${log.servingSize} • ` : ""}P: {log.protein || 0}g • C: {log.carbs || 0}g • F: {log.fats || 0}g
+                        </Text>
+                      </View>
+
+                      {/* Log Time at top right corner */}
+                      <Text style={styles.workoutTimeText}>
+                        {formatLogTime(log.createdAt)}
+                      </Text>
+
+                      {/* Delete button positioned nicely */}
+                      {!isPastDate && (
                         <TouchableOpacity
                           onPress={() => handleDeleteLog(log.id, log.title)}
-                          style={styles.deleteLogBtn}
+                          style={styles.workoutDeleteBtn}
                           activeOpacity={0.7}
                         >
-                          <Ionicons name="trash-outline" size={14} color={Colors.dark.error} />
+                          <Ionicons name="trash-outline" size={12} color={Colors.dark.error} />
                         </TouchableOpacity>
-                      </View>
+                      )}
                     </View>
                   );
                 } else if (log.type === "workout") {
@@ -690,13 +707,15 @@ export default function Dashboard() {
                       </Text>
 
                       {/* Delete button positioned nicely */}
-                      <TouchableOpacity
-                        onPress={() => handleDeleteLog(log.id, log.title)}
-                        style={styles.workoutDeleteBtn}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="trash-outline" size={12} color={Colors.dark.error} />
-                      </TouchableOpacity>
+                      {!isPastDate && (
+                        <TouchableOpacity
+                          onPress={() => handleDeleteLog(log.id, log.title)}
+                          style={styles.workoutDeleteBtn}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={12} color={Colors.dark.error} />
+                        </TouchableOpacity>
+                      )}
                     </View>
                   );
                 } else if (log.type === "water") {
@@ -734,13 +753,15 @@ export default function Dashboard() {
                       </Text>
 
                       {/* Delete button positioned nicely */}
-                      <TouchableOpacity
-                        onPress={() => handleDeleteLog(log.id, "Water Intake")}
-                        style={styles.workoutDeleteBtn}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="trash-outline" size={12} color={Colors.dark.error} />
-                      </TouchableOpacity>
+                      {!isPastDate && (
+                        <TouchableOpacity
+                          onPress={() => handleDeleteLog(log.id, "Water Intake")}
+                          style={styles.workoutDeleteBtn}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={12} color={Colors.dark.error} />
+                        </TouchableOpacity>
+                      )}
                     </View>
                   );
                 }
