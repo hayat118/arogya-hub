@@ -176,7 +176,7 @@ export default function FoodSearch() {
         ) : results.length === 0 ? (
           <View style={styles.centerContainer}>
             <Ionicons name="alert-circle-outline" size={48} color={Colors.dark.textMuted} style={styles.hintIcon} />
-            <Text style={styles.feedbackText}>No results found matching "{query}"</Text>
+            <Text style={styles.feedbackText}>{`No results found matching "${query}"`}</Text>
             <Text style={styles.hintSubtext}>Check spelling or try generic keywords</Text>
           </View>
         ) : (

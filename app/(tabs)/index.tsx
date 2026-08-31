@@ -596,7 +596,7 @@ export default function Dashboard() {
               <View style={styles.emptyLogsCard}>
                 <Ionicons name="clipboard-outline" size={32} color={Colors.dark.textMuted} style={{ marginBottom: 8 }} />
                 <Text style={styles.emptyLogsText}>No logs recorded for this date.</Text>
-                <Text style={styles.emptyLogsSubtext}>Tap the floating "+" button to add meals or activities.</Text>
+                <Text style={styles.emptyLogsSubtext}>{"Tap the floating \"+\" button to add meals or activities."}</Text>
               </View>
             ) : (
               logs.map((log) => {
