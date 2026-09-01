@@ -3,7 +3,8 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Tabs, useRouter, usePathname } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { StyleSheet, TouchableOpacity, View, Modal, Text, ActivityIndicator, InteractionManager } from "react-native";
+import { StyleSheet, TouchableOpacity, View, Modal, Text, ActivityIndicator, InteractionManager, Alert } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import Colors from "../../constants/Colors";
 import { saveUserProfile, db } from "../../services/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
@@ -40,9 +41,8 @@ export default function TabsLayout() {
   // Log menu state
   const [isLogMenuVisible, setIsLogMenuVisible] = useState(false);
   
-  // Scanner mockup state
-  const [isScannerVisible, setIsScannerVisible] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
+  // Image picker modal state
+  const [isImagePickerVisible, setIsImagePickerVisible] = useState(false);
 
   // Sync profile to Firebase Firestore & local storage cache
   useEffect(() => {
@@ -81,47 +81,81 @@ export default function TabsLayout() {
     }
   }, [user, isLoaded]);
 
-  // Start mock scanning
+  // Open custom premium modal to pick image source
   const handleStartScanning = () => {
     setIsLogMenuVisible(false);
-    setIsScannerVisible(true);
-    setIsScanning(true);
+    setIsImagePickerVisible(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    
-    setTimeout(() => {
-      setIsScanning(false);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    }, 1800);
   };
 
-  // Log mock scanned food
-  const handleLogScannedFood = async () => {
-    if (!user) return;
+  // Launch camera flow
+  const handleTakePhoto = async () => {
     try {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      
-      const storedDate = await AsyncStorage.getItem("active_calendar_date");
-      const today = new Date();
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
-        today.getDate()
-      ).padStart(2, "0")}`;
-      const activeDate = storedDate || todayStr;
-      
-      const userLogsCollection = collection(db, "users", user.id, "logs");
-      await addDoc(userLogsCollection, {
-        title: "Grilled Avocado Salmon Salad (Scan)",
-        type: "meal",
-        calories: 380,
-        protein: 28,
-        carbs: 10,
-        fats: 22,
-        date: activeDate,
-        createdAt: serverTimestamp(),
+      setIsImagePickerVisible(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Required",
+          "We need camera access to capture food photos for scanning.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
       });
-      
-      setIsScannerVisible(false);
-    } catch (err) {
-      console.error("Firestore log scanned food error:", err);
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const imageUri = result.assets[0].uri;
+        router.push({
+          pathname: "/analyzing-food",
+          params: { imageUri },
+        });
+      }
+    } catch (error) {
+      console.error("Camera error:", error);
+      Alert.alert("Error", "Failed to launch device camera.");
+    }
+  };
+
+  // Launch gallery picker flow
+  const handleChooseFromLibrary = async () => {
+    try {
+      setIsImagePickerVisible(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Required",
+          "We need library access to pick food photos.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const imageUri = result.assets[0].uri;
+        router.push({
+          pathname: "/analyzing-food",
+          params: { imageUri },
+        });
+      }
+    } catch (error) {
+      console.error("Library error:", error);
+      Alert.alert("Error", "Failed to open photo library.");
     }
   };
 
@@ -330,74 +364,78 @@ export default function TabsLayout() {
         </View>
       </Modal>
 
-      {/* AI Scanner Mock/Placeholder Modal */}
+      {/* Custom Premium Image Source Selector Modal */}
       <Modal
-        visible={isScannerVisible}
+        visible={isImagePickerVisible}
         transparent={true}
         animationType="slide"
-        onRequestClose={() => setIsScannerVisible(false)}
+        onRequestClose={() => setIsImagePickerVisible(false)}
       >
-        <View style={styles.scannerOverlay}>
-          <View style={styles.scannerHeader}>
-            <Text style={styles.scannerTitle}>AI Food Scanner</Text>
-            <TouchableOpacity onPress={() => setIsScannerVisible(false)} style={styles.scannerCloseBtn} activeOpacity={0.7}>
-              <Ionicons name="close" size={20} color={Colors.dark.text} />
-            </TouchableOpacity>
-          </View>
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setIsImagePickerVisible(false)}
+        >
+          <View style={styles.sheetContent}>
+            <View style={styles.sheetHandle} />
 
-          {isScanning ? (
-            <View style={styles.scanningBody}>
-              <View style={styles.scannerBox}>
-                <Ionicons name="scan-outline" size={120} color={Colors.dark.primary} />
-                <View style={styles.scanningLine} />
+            {/* Header */}
+            <View style={styles.sheetHeaderContainer}>
+              <View style={styles.sheetIconBadge}>
+                <Ionicons name="sparkles" size={12} color="#F59E0B" />
+                <Text style={styles.sheetBadgeText}>AI VISION</Text>
               </View>
-              <ActivityIndicator size="large" color={Colors.dark.primary} style={{ marginTop: 24 }} />
-              <Text style={styles.scanningText}>Scanning food plate via AI camera...</Text>
+              <Text style={styles.sheetTitle}>Scan Food Image</Text>
+              <Text style={styles.sheetSubtitle}>
+                Select how you would like to provide your food photo for AI analysis
+              </Text>
             </View>
-          ) : (
-            <View style={styles.scannerResultContainer}>
-              <Text style={styles.resultHeader}>Scan Success 🎉</Text>
-              <View style={styles.resultCard}>
-                <Ionicons name="restaurant" size={32} color={Colors.dark.primary} style={{ marginBottom: 12 }} />
-                <Text style={styles.scannedFoodTitle}>Grilled Avocado Salmon Salad</Text>
-                <Text style={styles.scannedFoodCal}>380 kcal</Text>
-                
-                <View style={styles.resultDivider} />
-                
-                <View style={styles.scannedMacrosRow}>
-                  <View style={styles.scannedMacroCol}>
-                    <Text style={styles.scannedMacroVal}>28g</Text>
-                    <Text style={styles.scannedMacroLabel}>Protein</Text>
-                  </View>
-                  <View style={styles.scannedMacroCol}>
-                    <Text style={styles.scannedMacroVal}>10g</Text>
-                    <Text style={styles.scannedMacroLabel}>Carbs</Text>
-                  </View>
-                  <View style={styles.scannedMacroCol}>
-                    <Text style={styles.scannedMacroVal}>22g</Text>
-                    <Text style={styles.scannedMacroLabel}>Fats</Text>
-                  </View>
-                </View>
-              </View>
 
+            {/* Option Cards */}
+            <View style={styles.sheetOptionsGroup}>
+              {/* Camera Option */}
               <TouchableOpacity
-                style={styles.logScannedBtn}
-                onPress={handleLogScannedFood}
+                style={styles.sheetCard}
+                onPress={handleTakePhoto}
                 activeOpacity={0.8}
               >
-                <Text style={styles.logScannedBtnText}>Log to Food Diary</Text>
+                <View style={[styles.sheetCardIconFrame, { backgroundColor: "rgba(41, 143, 80, 0.12)", borderColor: "rgba(41, 143, 80, 0.25)" }]}>
+                  <Ionicons name="camera-sharp" size={24} color="#298F50" />
+                </View>
+                <View style={styles.sheetCardTextContainer}>
+                  <Text style={styles.sheetCardTitle}>Take a Photo</Text>
+                  <Text style={styles.sheetCardSubtitle}>Use camera to snap fresh food dish</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="rgba(255, 255, 255, 0.3)" />
               </TouchableOpacity>
-              
+
+              {/* Gallery Option */}
               <TouchableOpacity
-                style={styles.retryScanBtn}
-                onPress={handleStartScanning}
-                activeOpacity={0.7}
+                style={styles.sheetCard}
+                onPress={handleChooseFromLibrary}
+                activeOpacity={0.8}
               >
-                <Text style={styles.retryScanBtnText}>Scan Again</Text>
+                <View style={[styles.sheetCardIconFrame, { backgroundColor: "rgba(167, 139, 250, 0.12)", borderColor: "rgba(167, 139, 250, 0.25)" }]}>
+                  <Ionicons name="images-sharp" size={24} color="#A78BFA" />
+                </View>
+                <View style={styles.sheetCardTextContainer}>
+                  <Text style={styles.sheetCardTitle}>Choose from Gallery</Text>
+                  <Text style={styles.sheetCardSubtitle}>Pick existing food photo from library</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="rgba(255, 255, 255, 0.3)" />
               </TouchableOpacity>
             </View>
-          )}
-        </View>
+
+            {/* Cancel Button */}
+            <TouchableOpacity
+              style={styles.sheetCancelBtn}
+              onPress={() => setIsImagePickerVisible(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </>
   );
@@ -530,161 +568,117 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  // Scanner Mock styles
-  scannerOverlay: {
+  // Custom Premium Image Source Selector Sheet Styles
+  sheetOverlay: {
     flex: 1,
-    backgroundColor: Colors.dark.background,
-    justifyContent: "space-between",
-    paddingVertical: 40,
-    paddingHorizontal: 20,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    justifyContent: "flex-end",
   },
-  scannerHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    width: "100%",
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255, 255, 255, 0.05)",
+  sheetContent: {
+    backgroundColor: Colors.dark.surface,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 36,
+    borderTopWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 12,
   },
-  scannerTitle: {
-    color: Colors.dark.text,
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  scannerCloseBtn: {
-    padding: 8,
-    borderRadius: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.03)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.05)",
-  },
-  scanningBody: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  scannerBox: {
-    width: 240,
-    height: 240,
-    borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.15)",
-    borderRadius: 32,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.01)",
-    position: "relative",
-    overflow: "hidden",
-  },
-  scanningLine: {
-    position: "absolute",
-    width: "100%",
-    height: 3,
-    backgroundColor: Colors.dark.primary,
-    shadowColor: Colors.dark.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
-    top: "50%", 
-  },
-  scanningText: {
-    color: Colors.dark.textSecondary,
-    fontSize: 14,
-    fontWeight: "500",
-    marginTop: 12,
-  },
-  scannerResultContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    width: "100%",
-    paddingHorizontal: 10,
-  },
-  resultHeader: {
-    color: Colors.dark.primary,
-    fontSize: 20,
-    fontWeight: "bold",
+  sheetHandle: {
+    width: 42,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    alignSelf: "center",
     marginBottom: 20,
   },
-  resultCard: {
-    width: "100%",
-    backgroundColor: Colors.dark.surface,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
-    padding: 24,
+  sheetHeaderContainer: {
     alignItems: "center",
     marginBottom: 24,
   },
-  scannedFoodTitle: {
+  sheetIconBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderColor: "rgba(245, 158, 11, 0.3)",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 10,
+  },
+  sheetBadgeText: {
+    color: "#F59E0B",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  sheetTitle: {
     color: Colors.dark.text,
-    fontSize: 18,
-    fontWeight: "700",
-    textAlign: "center",
+    fontSize: 20,
+    fontWeight: "bold",
     marginBottom: 6,
   },
-  scannedFoodCal: {
-    color: Colors.dark.primary,
-    fontSize: 22,
-    fontWeight: "800",
-    marginBottom: 16,
-  },
-  resultDivider: {
-    width: "100%",
-    height: 1,
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
-    marginVertical: 16,
-  },
-  scannedMacrosRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    width: "100%",
-  },
-  scannedMacroCol: {
-    alignItems: "center",
-  },
-  scannedMacroVal: {
-    color: Colors.dark.text,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  scannedMacroLabel: {
+  sheetSubtitle: {
     color: Colors.dark.textMuted,
-    fontSize: 11,
-    marginTop: 2,
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 18,
+    paddingHorizontal: 12,
   },
-  logScannedBtn: {
-    backgroundColor: Colors.dark.primary,
-    borderRadius: 16,
-    paddingVertical: 16,
-    width: "100%",
+  sheetOptionsGroup: {
+    gap: 14,
+    marginBottom: 20,
+  },
+  sheetCard: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    shadowColor: Colors.dark.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 8,
-    marginBottom: 12,
-  },
-  logScannedBtnText: {
-    color: Colors.dark.white,
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-  retryScanBtn: {
-    backgroundColor: "rgba(255, 255, 255, 0.03)",
-    borderColor: "rgba(255, 255, 255, 0.08)",
+    backgroundColor: "rgba(255, 255, 255, 0.02)",
     borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+    borderRadius: 20,
+    padding: 16,
+    gap: 16,
+  },
+  sheetCardIconFrame: {
+    width: 48,
+    height: 48,
     borderRadius: 16,
-    paddingVertical: 16,
-    width: "100%",
+    borderWidth: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  sheetCardTextContainer: {
+    flex: 1,
+  },
+  sheetCardTitle: {
+    color: Colors.dark.text,
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 3,
+  },
+  sheetCardSubtitle: {
+    color: Colors.dark.textMuted,
+    fontSize: 12,
+  },
+  sheetCancelBtn: {
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
   },
-  retryScanBtnText: {
+  sheetCancelText: {
     color: Colors.dark.textSecondary,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "600",
   },
 });

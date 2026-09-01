@@ -6,7 +6,6 @@ import { addDoc, collection, deleteDoc, doc, onSnapshot, query, setDoc, where } 
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Modal,
   ScrollView,
@@ -22,6 +21,7 @@ import HomeHeader from "../../components/HomeHeader";
 import WeeklyCalendar from "../../components/WeeklyCalendar";
 import Colors from "../../constants/Colors";
 import { db } from "../../services/firebase";
+import { calculateFallbackTargets } from "../../services/gemini";
 
 const formatLogTime = (createdAt: any) => {
   if (!createdAt) return "Just now";
@@ -64,6 +64,7 @@ export default function Dashboard() {
   const [targetFats, setTargetFats] = useState(70);
   const [targetWater, setTargetWater] = useState(3.0);
   const [aiAdvice, setAiAdvice] = useState("");
+  const [profileStats, setProfileStats] = useState<any>(null);
 
   // Edit targets modal states
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
@@ -91,7 +92,7 @@ export default function Dashboard() {
     saveActiveDate();
   }, [selectedDateId]);
 
-  // 2. Load user targets from cached onboarding data
+  // 2. Load user targets & physical profile stats from onboarding data
   useEffect(() => {
     async function loadTargets() {
       if (!user) return;
@@ -99,12 +100,31 @@ export default function Dashboard() {
         const stored = await AsyncStorage.getItem(`onboarding_data_${user.id}`);
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (parsed.targetCalories) setTargetCalories(Number(parsed.targetCalories));
-          if (parsed.targetProtein) setTargetProtein(Number(parsed.targetProtein));
-          if (parsed.targetCarbs) setTargetCarbs(Number(parsed.targetCarbs));
-          if (parsed.targetFats) setTargetFats(Number(parsed.targetFats));
-          if (parsed.targetWater) setTargetWater(Number(parsed.targetWater));
-          if (parsed.aiAdvice) setAiAdvice(parsed.aiAdvice);
+          setProfileStats(parsed);
+
+          if (parsed.targetCalories) {
+            setTargetCalories(Number(parsed.targetCalories));
+            setTargetProtein(Number(parsed.targetProtein || 150));
+            setTargetCarbs(Number(parsed.targetCarbs || 200));
+            setTargetFats(Number(parsed.targetFats || 70));
+            setTargetWater(Number(parsed.targetWater || 3.0));
+            if (parsed.aiAdvice) setAiAdvice(parsed.aiAdvice);
+          } else {
+            // Auto-calculate from physical profile stats using Mifflin-St Jeor formula
+            const gender = parsed.gender || "Male";
+            const goal = parsed.goal || "Weight Loss";
+            const freq = parsed.workoutFrequency || "3-4 days";
+            const birthYear = parsed.birthDate?.year || "1998";
+            const height = parsed.height || "175";
+            const weight = parsed.weight || "70";
+            const computed = calculateFallbackTargets(gender, goal, freq, birthYear, height, weight);
+            setTargetCalories(computed.calories);
+            setTargetProtein(computed.protein);
+            setTargetCarbs(computed.carbs);
+            setTargetFats(computed.fats);
+            setTargetWater(computed.water);
+            setAiAdvice(computed.advice);
+          }
         }
       } catch (error) {
         console.error("Failed to load calorie targets from AsyncStorage:", error);
@@ -156,32 +176,31 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, [user, selectedDateId]);
 
-  // Delete a log entry
+  // Delete confirmation modal state
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [isDeletingLog, setIsDeletingLog] = useState(false);
+
+  // Trigger delete confirmation popup
   const handleDeleteLog = (logId: string, logTitle: string) => {
     if (!user) return;
-    Alert.alert(
-      "Delete Log Entry",
-      `Are you sure you want to delete "${logTitle}"?`,
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => { });
-              const logDocRef = doc(db, "users", user.id, "logs", logId);
-              await deleteDoc(logDocRef);
-            } catch (err) {
-              console.error("Failed to delete log entry:", err);
-            }
-          },
-        },
-      ]
-    );
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => { });
+    setDeleteTarget({ id: logId, title: logTitle });
+  };
+
+  // Perform actual deletion from Firestore
+  const confirmDeleteLog = async () => {
+    if (!user || !deleteTarget) return;
+    try {
+      setIsDeletingLog(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
+      const logDocRef = doc(db, "users", user.id, "logs", deleteTarget.id);
+      await deleteDoc(logDocRef);
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error("Failed to delete log entry:", err);
+    } finally {
+      setIsDeletingLog(false);
+    }
   };
 
   // Open targets modal prefilled
@@ -193,6 +212,41 @@ export default function Dashboard() {
     setEditWater(String(targetWater));
     setModalError("");
     setIsEditModalVisible(true);
+  };
+
+  // Recalculate targets state & logic
+  const [isAutoCalculating, setIsAutoCalculating] = useState(false);
+
+  const handleAutoCalculateTargets = async () => {
+    if (isAutoCalculating) return;
+    try {
+      setIsAutoCalculating(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => { });
+
+      // Short delay so refreshing state and indicator are clearly visible
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      const gender = profileStats?.gender || "Male";
+      const goal = profileStats?.goal || "Weight Loss";
+      const freq = profileStats?.workoutFrequency || "3-4 days";
+      const birthYear = profileStats?.birthDate?.year || "1998";
+      const height = profileStats?.height || "175";
+      const weight = profileStats?.weight || "70";
+
+      const computed = calculateFallbackTargets(gender, goal, freq, birthYear, height, weight);
+
+      setEditCalories(String(computed.calories));
+      setEditProtein(String(computed.protein));
+      setEditCarbs(String(computed.carbs));
+      setEditFats(String(computed.fats));
+      setEditWater(String(computed.water));
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
+    } catch (err) {
+      console.error("Auto calculation error:", err);
+    } finally {
+      setIsAutoCalculating(false);
+    }
   };
 
   // Save new target metrics to Firestore & Local Storage
@@ -295,12 +349,7 @@ export default function Dashboard() {
     .filter((log) => log.type === "workout")
     .reduce((sum, log) => sum + (log.calories || 0), 0);
 
-  const remainingCalories = Math.max(0, targetCalories - consumedCalories + burnedCalories);
-  const remainingPercent = targetCalories > 0 ? Math.round((remainingCalories / targetCalories) * 100) : 0;
-
-  // Calculate consumed percent based on Net Calories (Eaten - Burned) for progressive ring adjustments
   const netCalories = Math.max(0, consumedCalories - burnedCalories);
-  const consumedPercent = targetCalories > 0 ? Math.min(1, netCalories / targetCalories) : 0;
 
   const consumedProtein = logs
     .filter((log) => log.type === "meal")
@@ -329,8 +378,36 @@ export default function Dashboard() {
     .reduce((sum, log) => sum + (log.amount || 0), 0);
 
   const consumedGlasses = consumedWater / 0.25;
-  const targetGlasses = Math.min(16, Math.ceil(targetWater / 0.25));
+  const targetGlasses = Math.ceil(targetWater / 0.25);
   const glassesLeft = Math.max(0, (targetWater / 0.25) - consumedGlasses);
+
+  // Calculate progress bar color dynamically based on percentage threshold
+  const getMacroBarColor = (percent: number) => {
+    const percentage = percent * 100;
+    if (percentage < 50) {
+      return "#F59E0B"; // Light Mustard (<50%)
+    } else if (percentage < 80) {
+      return "#93eeb4ff"; // Light Green (50%-80%)
+    } else {
+      return Colors.dark.primary; // Theme Green (80%-100%+)
+    }
+  };
+
+  // Group glasses into 8-per-row chunks for vertical scrolling (16 visible at a time)
+  const totalGlassesToRender = Math.max(targetGlasses, Math.ceil(consumedGlasses));
+  const glassRows: number[][] = [];
+  for (let i = 0; i < totalGlassesToRender; i += 8) {
+    const row: number[] = [];
+    for (let j = i; j < i + 8; j++) {
+      row.push(j);
+    }
+    glassRows.push(row);
+  }
+
+  // Dual Ring Percent Calculations (both rings share targetCalories baseline)
+  const eatenPercentText = targetCalories > 0 ? Math.round((consumedCalories / targetCalories) * 100) : 0;
+  const targetBurned = targetCalories; // Match targeted calories eaten
+  const burnedPercentText = targetBurned > 0 ? Math.round((burnedCalories / targetBurned) * 100) : 0;
 
   return (
     <View style={styles.rootContainer}>
@@ -345,60 +422,129 @@ export default function Dashboard() {
           <View style={styles.glassCard}>
             {/* Card Header */}
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Calories</Text>
+              <Text style={styles.cardTitle}>Daily Calories Required!</Text>
               <TouchableOpacity style={styles.editButton} onPress={handleOpenEditModal} activeOpacity={0.7}>
                 <Ionicons name="pencil-sharp" size={12} color={Colors.dark.primary} />
                 <Text style={styles.editButtonText}>Edit</Text>
               </TouchableOpacity>
             </View>
 
-            <View style={styles.ringContainer}>
-              <Svg width={140} height={140} style={styles.ringSvg}>
-                {/* Background Track */}
-                <Circle
-                  cx={70}
-                  cy={70}
-                  r={60}
-                  stroke="rgba(41, 143, 80, 0.08)"
-                  strokeWidth={10}
-                  fill="transparent"
-                />
-                {/* Active Progress Segment */}
-                <Circle
-                  cx={70}
-                  cy={70}
-                  r={60}
-                  stroke={Colors.dark.primary}
-                  strokeWidth={10}
-                  fill="transparent"
-                  strokeDasharray={377} // 2 * Math.PI * 60 ≈ 376.99
-                  strokeDashoffset={377 - consumedPercent * 377}
-                  strokeLinecap="round"
-                  transform="rotate(-90 70 70)" // Start drawing from top center
-                />
-              </Svg>
+            {/* Target Calorie Formula Notice (BMR box directly below title) */}
+            <View style={styles.bmrNoticeTag}>
+              <Ionicons name="sparkles" size={12} color="#F59E0B" />
+              <Text style={styles.bmrNoticeText}>
+                Target calculated from Height ({profileStats?.height || "175cm"}), Weight ({profileStats?.weight || "70kg"}) & Goal ({profileStats?.goal || "Fitness"})
+              </Text>
+            </View>
 
-              <View style={styles.ringInfo}>
-                <Text style={styles.remainingNumber}>{remainingCalories}</Text>
-                <Text style={styles.remainingLabel}>Cal remaining</Text>
-                <Text style={styles.remainingPercent}>{remainingPercent}% left</Text>
+            {/* Dual Side-by-Side Progress Rings */}
+            <View style={styles.dualRingsRow}>
+              {/* Left Ring: Calories Eaten */}
+              <View style={styles.ringCardItem}>
+                <Text style={styles.ringCardHeaderTitle}>Calories Eaten</Text>
+                <View style={styles.ringSvgWrapper}>
+                  <Svg width={115} height={115} style={styles.ringSvg}>
+                    <Circle
+                      cx={57.5}
+                      cy={57.5}
+                      r={48}
+                      stroke="rgba(16, 185, 129, 0.12)"
+                      strokeWidth={8}
+                      fill="transparent"
+                    />
+                    <Circle
+                      cx={57.5}
+                      cy={57.5}
+                      r={48}
+                      stroke={consumedCalories > targetCalories ? "#EF4444" : "#10B981"}
+                      strokeWidth={8}
+                      fill="transparent"
+                      strokeDasharray={301.6}
+                      strokeDashoffset={301.6 - Math.min(1, targetCalories > 0 ? consumedCalories / targetCalories : 0) * 301.6}
+                      strokeLinecap="round"
+                      transform="rotate(-90 57.5 57.5)"
+                    />
+                  </Svg>
+                  <View style={styles.ringInnerInfo}>
+                    <Ionicons name="flame" size={14} color="#10B981" />
+                    <Text style={styles.ringNumberVal}>{consumedCalories}</Text>
+                    <Text style={styles.ringSubLabel}>cal eaten</Text>
+                    <Text style={[styles.ringPercentLabel, { color: "#10B981" }]}>{eatenPercentText}%</Text>
+                  </View>
+                </View>
+                <Text style={styles.ringTargetGoalText}>Target: {targetCalories} cal</Text>
+              </View>
+
+              {/* Right Ring: Active Burned */}
+              <View style={styles.ringCardItem}>
+                <Text style={styles.ringCardHeaderTitle}>Active Burned</Text>
+                <View style={styles.ringSvgWrapper}>
+                  <Svg width={115} height={115} style={styles.ringSvg}>
+                    <Circle
+                      cx={57.5}
+                      cy={57.5}
+                      r={48}
+                      stroke="rgba(245, 158, 11, 0.12)"
+                      strokeWidth={8}
+                      fill="transparent"
+                    />
+                    <Circle
+                      cx={57.5}
+                      cy={57.5}
+                      r={48}
+                      stroke="#F59E0B"
+                      strokeWidth={8}
+                      fill="transparent"
+                      strokeDasharray={301.6}
+                      strokeDashoffset={301.6 - Math.min(1, burnedCalories / targetBurned) * 301.6}
+                      strokeLinecap="round"
+                      transform="rotate(-90 57.5 57.5)"
+                    />
+                  </Svg>
+                  <View style={styles.ringInnerInfo}>
+                    <Ionicons name="barbell" size={14} color="#F59E0B" />
+                    <Text style={styles.ringNumberVal}>{burnedCalories}</Text>
+                    <Text style={styles.ringSubLabel}>cal burned</Text>
+                    <Text style={[styles.ringPercentLabel, { color: "#F59E0B" }]}>{burnedPercentText}%</Text>
+                  </View>
+                </View>
+                <Text style={styles.ringTargetGoalText}>Goal: {targetBurned} cal</Text>
               </View>
             </View>
 
-            <View style={styles.divider} />
-
-            <View style={styles.ringStatsRow}>
-              <View style={styles.statCol}>
-                <Ionicons name="flame-outline" size={18} color="#F59E0B" />
-                <Text style={styles.statValue}>{consumedCalories}</Text>
-                <Text style={styles.statLabel}>Eaten</Text>
-              </View>
-              <View style={styles.statCol}>
-                <Ionicons name="barbell-outline" size={18} color="#10B981" />
-                <Text style={styles.statValue}>{burnedCalories}</Text>
-                <Text style={styles.statLabel}>Active Burned</Text>
-              </View>
+            {/* Net Energy Summary Row */}
+            <View style={styles.netEnergyBanner}>
+              <Ionicons name="flash-outline" size={14} color={Colors.dark.primary} />
+              <Text style={styles.netEnergyText}>
+                Net Energy: <Text style={{ color: Colors.dark.text, fontWeight: "bold" }}>{netCalories} cal</Text> ({consumedCalories} Eaten - {burnedCalories} Burned)
+              </Text>
             </View>
+
+            {/* Calorie Fulfillment & Overage Warnings */}
+            {consumedCalories >= targetCalories && targetCalories > 0 && (
+              <View style={styles.calorieStatusContainer}>
+                {/* Fulfilled Message Line */}
+                <View style={styles.calorieFulfilledBanner}>
+                  <Ionicons name="checkmark-circle" size={16} color={Colors.dark.primary} />
+                  <Text style={styles.calorieFulfilledText}>Daily Calorie Goal Fulfilled! 🎉</Text>
+                </View>
+
+                {/* Extra Calorie Warning Line & Calorie Count in Red Color Below */}
+                {consumedCalories > targetCalories && (
+                  <View style={styles.calorieWarningBanner}>
+                    <View style={styles.calorieWarningHeader}>
+                      <Ionicons name="warning-sharp" size={15} color="#EF4444" />
+                      <Text style={styles.calorieWarningText}>Warning: Extra calories consumed after target!</Text>
+                    </View>
+                    <View style={styles.calorieExtraBadge}>
+                      <Text style={styles.calorieExtraBadgeText}>
+                        +{Math.round(consumedCalories - targetCalories)} cal extra
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
 
             <View style={styles.divider} />
 
@@ -408,41 +554,77 @@ export default function Dashboard() {
                 <View style={styles.macroVerticalHeader}>
                   <View style={styles.macroTitleRow}>
                     <Text style={[styles.macroVerticalName, styles.proteinText]}>Protein</Text>
-                    <Text style={[styles.macroVerticalPercent, styles.proteinText]}>{proteinPercentageText}%</Text>
+                    <Text style={[styles.macroVerticalPercent, { color: getMacroBarColor(proteinPercent) }]}>{proteinPercentageText}%</Text>
                   </View>
-                  <Text style={styles.macroVerticalRatio}>{consumedProtein}/{targetProtein}g</Text>
+                  <Text style={styles.macroVerticalRatio}>
+                    {consumedProtein}g / <Text style={{ fontWeight: "bold" }}>{targetProtein}g</Text>
+                  </Text>
                 </View>
                 <View style={styles.macroProgressTrack}>
-                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(proteinPercent * 100))}%`, backgroundColor: "#8B5CF6" }]} />
+                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(proteinPercent * 100))}%`, backgroundColor: getMacroBarColor(proteinPercent) }]} />
                 </View>
+                {consumedProtein >= targetProtein && targetProtein > 0 && (
+                  <View style={styles.macroFooterRow}>
+                    <Text style={styles.fulfilledText}>Fulfilled daily required 🎉</Text>
+                    {consumedProtein > targetProtein && (
+                      <View style={styles.overageBadge}>
+                        <Text style={styles.overageBadgeText}>+{Math.round(consumedProtein - targetProtein)}g</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
 
               {/* Carbs */}
-              <View style={[styles.macroVerticalCard, styles.carbsVerticalCard]}>
+              <View style={[styles.macroVerticalCard, styles.proteinVerticalCard]}>
                 <View style={styles.macroVerticalHeader}>
                   <View style={styles.macroTitleRow}>
-                    <Text style={[styles.macroVerticalName, styles.carbsText]}>Carbs</Text>
-                    <Text style={[styles.macroVerticalPercent, styles.carbsText]}>{carbsPercentageText}%</Text>
+                    <Text style={[styles.macroVerticalName, styles.proteinText]}>Carbs</Text>
+                    <Text style={[styles.macroVerticalPercent, { color: getMacroBarColor(carbsPercent) }]}>{carbsPercentageText}%</Text>
                   </View>
-                  <Text style={styles.macroVerticalRatio}>{consumedCarbs}/{targetCarbs}g</Text>
+                  <Text style={styles.macroVerticalRatio}>
+                    {consumedCarbs}g / <Text style={{ fontWeight: "bold" }}>{targetCarbs}g</Text>
+                  </Text>
                 </View>
                 <View style={styles.macroProgressTrack}>
-                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(carbsPercent * 100))}%`, backgroundColor: "#3B82F6" }]} />
+                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(carbsPercent * 100))}%`, backgroundColor: getMacroBarColor(carbsPercent) }]} />
                 </View>
+                {consumedCarbs >= targetCarbs && targetCarbs > 0 && (
+                  <View style={styles.macroFooterRow}>
+                    <Text style={styles.fulfilledText}>Fulfilled daily required 🎉</Text>
+                    {consumedCarbs > targetCarbs && (
+                      <View style={styles.overageBadge}>
+                        <Text style={styles.overageBadgeText}>+{Math.round(consumedCarbs - targetCarbs)}g</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
 
               {/* Fats */}
-              <View style={[styles.macroVerticalCard, styles.fatsVerticalCard]}>
+              <View style={[styles.macroVerticalCard, styles.proteinVerticalCard]}>
                 <View style={styles.macroVerticalHeader}>
                   <View style={styles.macroTitleRow}>
-                    <Text style={[styles.macroVerticalName, styles.fatsText]}>Fats</Text>
-                    <Text style={[styles.macroVerticalPercent, styles.fatsText]}>{fatsPercentageText}%</Text>
+                    <Text style={[styles.macroVerticalName, styles.proteinText]}>Fats</Text>
+                    <Text style={[styles.macroVerticalPercent, { color: getMacroBarColor(fatsPercent) }]}>{fatsPercentageText}%</Text>
                   </View>
-                  <Text style={styles.macroVerticalRatio}>{consumedFats}/{targetFats}g</Text>
+                  <Text style={styles.macroVerticalRatio}>
+                    {consumedFats}g / <Text style={{ fontWeight: "bold" }}>{targetFats}g</Text>
+                  </Text>
                 </View>
                 <View style={styles.macroProgressTrack}>
-                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(fatsPercent * 100))}%`, backgroundColor: Colors.dark.error }]} />
+                  <View style={[styles.macroProgressBar, { width: `${Math.min(100, Math.round(fatsPercent * 100))}%`, backgroundColor: getMacroBarColor(fatsPercent) }]} />
                 </View>
+                {consumedFats >= targetFats && targetFats > 0 && (
+                  <View style={styles.macroFooterRow}>
+                    <Text style={styles.fulfilledText}>Fulfilled daily required 🎉</Text>
+                    {consumedFats > targetFats && (
+                      <View style={styles.overageBadge}>
+                        <Text style={styles.overageBadgeText}>+{Math.round(consumedFats - targetFats)}g</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             </View>
           </View>
@@ -462,10 +644,7 @@ export default function Dashboard() {
                   <Text style={styles.waterQuickAddText}>+250ml</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.editButton} onPress={handleOpenEditModal} activeOpacity={0.7}>
-                  <Ionicons name="pencil-sharp" size={12} color={Colors.dark.primary} />
-                  <Text style={styles.editButtonText}>Edit</Text>
-                </TouchableOpacity>
+
               </View>
             </View>
 
@@ -475,83 +654,58 @@ export default function Dashboard() {
                 <Ionicons name="water" size={18} color="#3B82F6" />
               </View>
               <View style={styles.waterTargetTextContainer}>
-                <Text style={styles.waterTargetValue}>{targetWater} Liters</Text>
-                <Text style={styles.waterTargetLabel}>Recommended Daily Intake</Text>
+                <Text style={styles.waterTargetValue}>{targetWater} Liters ({targetGlasses} Glasses)</Text>
+                <Text style={styles.waterTargetLabel}>Daily Adult Water Target</Text>
               </View>
             </View>
 
-            {/* Glasses Grid */}
-            <View style={styles.waterGrid}>
-              {/* Row 1: Glasses 0 to 7 */}
-              <View style={styles.waterGridRow}>
-                {Array.from({ length: 8 }).map((_, i) => {
-                  const glassIndex = i;
-                  if (glassIndex >= targetGlasses) {
-                    return <View key={`placeholder-${glassIndex}`} style={styles.glassPlaceholder} />;
-                  }
-                  const isFull = consumedGlasses >= glassIndex + 1;
-                  const isHalf = !isFull && consumedGlasses >= glassIndex + 0.5;
+            {/* Glasses Grid in Vertical Scrollable Container (16 visible at a time) */}
+            <View style={styles.waterScrollWrapper}>
+              <ScrollView
+                style={styles.waterGridScroll}
+                nestedScrollEnabled={true}
+                showsVerticalScrollIndicator={totalGlassesToRender > 16}
+                contentContainerStyle={styles.waterGridContent}
+              >
+                {glassRows.map((row, rowIndex) => (
+                  <View key={`row-${rowIndex}`} style={styles.waterGridRow}>
+                    {row.map((glassIndex) => {
+                      if (glassIndex >= totalGlassesToRender) {
+                        return <View key={`placeholder-${glassIndex}`} style={styles.glassPlaceholder} />;
+                      }
+                      const isFull = consumedGlasses >= glassIndex + 1;
+                      const isHalf = !isFull && consumedGlasses >= glassIndex + 0.5;
 
-                  return (
-                    <TouchableOpacity
-                      key={glassIndex}
-                      onPress={handleQuickAddWater}
-                      activeOpacity={0.8}
-                      style={styles.glassTouch}
-                    >
-                      <Image
-                        source={
-                          isFull
-                            ? require("../../assets/images/full_glass.png")
-                            : isHalf
-                              ? require("../../assets/images/half_glass.png")
-                              : require("../../assets/images/empty_glass.png")
-                        }
-                        style={styles.waterGlassImage}
-                        resizeMode="contain"
-                      />
-                      <Text style={styles.waterGlassNumber}>{glassIndex + 1}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Row 2: Glasses 8 to 15 */}
-              {targetGlasses > 8 ? (
-                <View style={styles.waterGridRow}>
-                  {Array.from({ length: 8 }).map((_, i) => {
-                    const glassIndex = i + 8;
-                    if (glassIndex >= targetGlasses) {
-                      return <View key={`placeholder-${glassIndex}`} style={styles.glassPlaceholder} />;
-                    }
-                    const isFull = consumedGlasses >= glassIndex + 1;
-                    const isHalf = !isFull && consumedGlasses >= glassIndex + 0.5;
-
-                    return (
-                      <TouchableOpacity
-                        key={glassIndex}
-                        onPress={handleQuickAddWater}
-                        activeOpacity={0.8}
-                        style={styles.glassTouch}
-                      >
-                        <Image
-                          source={
-                            isFull
-                              ? require("../../assets/images/full_glass.png")
-                              : isHalf
-                                ? require("../../assets/images/half_glass.png")
-                                : require("../../assets/images/empty_glass.png")
-                          }
-                          style={styles.waterGlassImage}
-                          resizeMode="contain"
-                        />
-                        <Text style={styles.waterGlassNumber}>{glassIndex + 1}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              ) : null}
+                      return (
+                        <TouchableOpacity
+                          key={glassIndex}
+                          onPress={handleQuickAddWater}
+                          activeOpacity={0.8}
+                          style={styles.glassTouch}
+                        >
+                          <Image
+                            source={
+                              isFull
+                                ? require("../../assets/images/full_glass.png")
+                                : isHalf
+                                  ? require("../../assets/images/half_glass.png")
+                                  : require("../../assets/images/empty_glass.png")
+                            }
+                            style={styles.waterGlassImage}
+                            resizeMode="contain"
+                          />
+                          <Text style={styles.waterGlassNumber}>{glassIndex + 1}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ))}
+              </ScrollView>
             </View>
+
+            {totalGlassesToRender > 16 && (
+              <Text style={styles.scrollNoticeText}>Scroll vertically for more glasses ↓</Text>
+            )}
 
             {/* Status text */}
             <View style={styles.waterFooter}>
@@ -615,10 +769,10 @@ export default function Dashboard() {
                           Food: {log.title}
                         </Text>
 
-                        {/* Calories Row */}
+                        {/* Calories Row in Eaten Circle Color (#10B981) */}
                         <View style={styles.workoutCalRow}>
-                          <Ionicons name="flame" size={14} color="#EF4444" />
-                          <Text style={styles.workoutCalText}>{log.calories} Cals</Text>
+                          <Ionicons name="flame" size={14} color="#10B981" />
+                          <Text style={[styles.workoutCalText, { color: "#10B981" }]}>{log.calories} Cals</Text>
                         </View>
 
                         {/* Metadata row with serving size and macronutrients */}
@@ -689,10 +843,10 @@ export default function Dashboard() {
                           {log.title}
                         </Text>
 
-                        {/* Flame Icon & Calorie Burn */}
+                        {/* Flame Icon & Calorie Burn in Active Burned Circle Color (#F59E0B) */}
                         <View style={styles.workoutCalRow}>
-                          <Ionicons name="flame" size={14} color="#EF4444" />
-                          <Text style={styles.workoutCalText}>{log.calories} Cals</Text>
+                          <Ionicons name="flame" size={14} color="#F59E0B" />
+                          <Text style={[styles.workoutCalText, { color: "#F59E0B" }]}>{log.calories} Cals</Text>
                         </View>
 
                         {/* Intensity with Type and Duration */}
@@ -799,11 +953,42 @@ export default function Dashboard() {
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {modalError ? <Text style={styles.modalErrorText}>{modalError}</Text> : null}
 
+              {/* Auto-Calculate Action Banner */}
+              <TouchableOpacity
+                style={[styles.autoCalcBanner, isAutoCalculating && { opacity: 0.7 }]}
+                onPress={handleAutoCalculateTargets}
+                disabled={isAutoCalculating}
+                activeOpacity={0.8}
+              >
+                <View style={styles.autoCalcIconFrame}>
+                  {isAutoCalculating ? (
+                    <ActivityIndicator size="small" color="#298F50" />
+                  ) : (
+                    <Ionicons name="calculator-sharp" size={18} color="#298F50" />
+                  )}
+                </View>
+                <View style={styles.autoCalcTextFrame}>
+                  <Text style={styles.autoCalcTitle}>
+                    {isAutoCalculating ? "Recalculating Targets..." : "Auto-Calculate Target"}
+                  </Text>
+                  <Text style={styles.autoCalcSubtitle}>
+                    {isAutoCalculating
+                      ? "Refreshing BMR & macronutrient values..."
+                      : `Recompute BMR & TDEE from ${profileStats?.height || "Height"}, ${profileStats?.weight || "Weight"} & Goal`}
+                  </Text>
+                </View>
+                {isAutoCalculating ? (
+                  <ActivityIndicator size="small" color="#298F50" />
+                ) : (
+                  <Ionicons name="refresh-sharp" size={16} color="#298F50" />
+                )}
+              </TouchableOpacity>
+
               {/* Calories Target Row */}
               <View style={styles.modalFormItem}>
                 <View style={styles.modalLabelRow}>
                   <Ionicons name="flame" size={16} color="#F59E0B" />
-                  <Text style={styles.modalLabel}>Calories Target (kcal)</Text>
+                  <Text style={styles.modalLabel}>Calories Target (cal)</Text>
                 </View>
                 <TextInput
                   style={styles.modalInput}
@@ -905,6 +1090,71 @@ export default function Dashboard() {
             </ScrollView>
           </View>
         </View>
+      </Modal>
+
+      {/* Custom Premium Delete Confirmation Modal */}
+      <Modal
+        visible={!!deleteTarget}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setDeleteTarget(null)}
+      >
+        <TouchableOpacity
+          style={styles.deleteModalOverlay}
+          activeOpacity={1}
+          onPress={() => setDeleteTarget(null)}
+        >
+          <TouchableOpacity style={styles.deleteModalCard} activeOpacity={1}>
+            {/* Trash Icon Badge */}
+            <View style={styles.deleteIconBadge}>
+              <Ionicons name="trash-bin-sharp" size={32} color="#EF4444" />
+            </View>
+
+            {/* Title & Subtitle */}
+            <Text style={styles.deleteModalTitle}>Delete Log Entry?</Text>
+            <Text style={styles.deleteModalSubtitle}>
+              Are you sure you want to delete this item? This action cannot be undone.
+            </Text>
+
+            {/* Target Item Name Pill */}
+            {deleteTarget && (
+              <View style={styles.deleteItemPill}>
+                <Ionicons name="pricetag-outline" size={14} color="#EF4444" />
+                <Text style={styles.deleteItemText} numberOfLines={1}>
+                  {deleteTarget.title}
+                </Text>
+              </View>
+            )}
+
+            {/* Action Buttons Row */}
+            <View style={styles.deleteModalBtnRow}>
+              <TouchableOpacity
+                style={styles.deleteCancelBtn}
+                onPress={() => setDeleteTarget(null)}
+                activeOpacity={0.7}
+                disabled={isDeletingLog}
+              >
+                <Text style={styles.deleteCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.deleteConfirmBtn}
+                onPress={confirmDeleteLog}
+                activeOpacity={0.8}
+                disabled={isDeletingLog}
+              >
+                {isDeletingLog ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="trash" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.deleteConfirmBtnText}>Delete</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -1082,8 +1332,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   proteinVerticalCard: {
-    backgroundColor: "rgba(139, 92, 246, 0.05)",
-    borderColor: "rgba(139, 92, 246, 0.15)",
+    backgroundColor: "rgba(139, 92, 246, 0.08)",
+    borderColor: "rgba(139, 92, 246, 0.2)",
   },
   carbsVerticalCard: {
     backgroundColor: "rgba(59, 130, 246, 0.05)",
@@ -1523,5 +1773,344 @@ const styles = StyleSheet.create({
     color: Colors.dark.white,
     fontSize: 14,
     fontWeight: "bold",
+  },
+  // Delete Modal Styles
+  deleteModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  deleteModalCard: {
+    width: "100%",
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.2)",
+    padding: 24,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  deleteIconBadge: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(239, 68, 68, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.25)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  deleteModalTitle: {
+    color: Colors.dark.text,
+    fontSize: 20,
+    fontWeight: "bold",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  deleteModalSubtitle: {
+    color: Colors.dark.textMuted,
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 18,
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
+  deleteItemPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.15)",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 24,
+    width: "100%",
+    justifyContent: "center",
+  },
+  deleteItemText: {
+    color: "#EF4444",
+    fontSize: 14,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
+  deleteModalBtnRow: {
+    flexDirection: "row",
+    gap: 12,
+    width: "100%",
+  },
+  deleteCancelBtn: {
+    flex: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deleteCancelBtnText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  deleteConfirmBtn: {
+    flex: 1,
+    backgroundColor: "#EF4444",
+    borderRadius: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#EF4444",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  deleteConfirmBtnText: {
+    color: Colors.dark.white,
+    fontSize: 15,
+    fontWeight: "bold",
+  },
+  bmrNoticeTag: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(245, 158, 11, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.15)",
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  bmrNoticeText: {
+    color: "#F59E0B",
+    fontSize: 12,
+    fontWeight: "500",
+    flex: 1,
+    lineHeight: 16,
+  },
+  autoCalcBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(41, 143, 80, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(41, 143, 80, 0.2)",
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 16,
+    gap: 12,
+  },
+  autoCalcIconFrame: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "rgba(41, 143, 80, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  autoCalcTextFrame: {
+    flex: 1,
+  },
+  autoCalcTitle: {
+    color: Colors.dark.text,
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  autoCalcSubtitle: {
+    color: Colors.dark.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  waterScrollWrapper: {
+    maxHeight: 116,
+    width: "100%",
+    marginVertical: 10,
+  },
+  waterGridScroll: {
+    maxHeight: 116,
+    width: "100%",
+  },
+  waterGridContent: {
+    gap: 12,
+    paddingVertical: 0,
+  },
+  scrollNoticeText: {
+    color: "#3B82F6",
+    fontSize: 10,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  macroFooterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+  },
+  fulfilledText: {
+    color: Colors.dark.primary,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  overageBadge: {
+    backgroundColor: "rgba(239, 68, 68, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.3)",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  overageBadgeText: {
+    color: "#EF4444",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  calorieStatusContainer: {
+    width: "100%",
+    marginTop: 12,
+    gap: 8,
+  },
+  calorieFulfilledBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "rgba(41, 143, 80, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(41, 143, 80, 0.2)",
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    width: "100%",
+  },
+  calorieFulfilledText: {
+    color: Colors.dark.primary,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  calorieWarningBanner: {
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.25)",
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    width: "100%",
+  },
+  calorieWarningHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  calorieWarningText: {
+    color: "#EF4444",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  calorieExtraBadge: {
+    backgroundColor: "rgba(239, 68, 68, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.35)",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginTop: 2,
+  },
+  calorieExtraBadgeText: {
+    color: "#EF4444",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  dualRingsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    width: "100%",
+    gap: 12,
+    marginVertical: 8,
+  },
+  ringCardItem: {
+    flex: 1,
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.02)",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.05)",
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+  },
+  ringCardHeaderTitle: {
+    color: Colors.dark.text,
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  ringSvgWrapper: {
+    width: 115,
+    height: 115,
+    justifyContent: "center",
+    alignItems: "center",
+    position: "relative",
+  },
+  ringInnerInfo: {
+    position: "absolute",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  ringNumberVal: {
+    color: Colors.dark.text,
+    fontSize: 18,
+    fontWeight: "bold",
+    marginTop: 2,
+  },
+  ringSubLabel: {
+    color: Colors.dark.textMuted,
+    fontSize: 10,
+    fontWeight: "500",
+  },
+  ringPercentLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  ringTargetGoalText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 8,
+  },
+  netEnergyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    width: "100%",
+    marginTop: 8,
+  },
+  netEnergyText: {
+    color: Colors.dark.textSecondary,
+    fontSize: 12,
+    fontWeight: "600",
   },
 });

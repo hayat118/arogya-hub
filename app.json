@@ -39,7 +39,14 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you choose food pictures for scanning.",
+          "cameraPermission": "The app accesses your camera to let you take pictures of food to scan."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -54,7 +54,8 @@ function InitialLayout() {
       segments[0] === "workout-summary" ||
       segments[0] === "log-water" ||
       segments[0] === "food-search" ||
-      segments[0] === "log-food-details";
+      segments[0] === "log-food-details" ||
+      segments[0] === "analyzing-food";
 
     if (isSignedIn) {
       if (hasCompletedOnboarding) {
@@ -98,6 +99,7 @@ function InitialLayout() {
       <Stack.Screen name="log-water" />
       <Stack.Screen name="food-search" />
       <Stack.Screen name="log-food-details" />
+      <Stack.Screen name="analyzing-food" />
     </Stack>
   );
 }
