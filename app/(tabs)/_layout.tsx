@@ -227,6 +227,7 @@ export default function TabsLayout() {
           options={{
             title: "Analytics",
             tabBarLabel: "Analytics",
+            headerShown: false,
             tabBarIcon: ({ color, focused }) => (
               <Ionicons name={focused ? "bar-chart" : "bar-chart-outline"} size={22} color={color} />
             ),
