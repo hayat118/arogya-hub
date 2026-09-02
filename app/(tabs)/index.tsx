@@ -429,14 +429,6 @@ export default function Dashboard() {
               </TouchableOpacity>
             </View>
 
-            {/* Target Calorie Formula Notice (BMR box directly below title) */}
-            <View style={styles.bmrNoticeTag}>
-              <Ionicons name="sparkles" size={12} color="#F59E0B" />
-              <Text style={styles.bmrNoticeText}>
-                Target calculated from Height ({profileStats?.height || "175cm"}), Weight ({profileStats?.weight || "70kg"}) & Goal ({profileStats?.goal || "Fitness"})
-              </Text>
-            </View>
-
             {/* Dual Side-by-Side Progress Rings */}
             <View style={styles.dualRingsRow}>
               {/* Left Ring: Calories Eaten */}
