@@ -406,3 +406,193 @@ You MUST return a JSON object with this exact schema:
     return fallbackResult;
   }
 }
+
+export interface BentoGridData {
+  coachTitle: string;
+  coachInsight: string;
+  actionableTip: string;
+  habitScore: number;
+  habitRating: string;
+  projectedWeeks: number;
+  estimatedGoalDate: string;
+  weightTrendStatus: string;
+  macroRatioText: string;
+  macroHarmonyScore: number;
+  generatedAtFormatted?: string;
+  isCached?: boolean;
+  isFallback?: boolean;
+}
+
+export function calculateFallbackBentoGrid(userStats: {
+  weight: number;
+  targetWeight: number;
+  goal: string;
+  weeklyEaten: number;
+  weeklyBurned: number;
+  weeklyWater: number;
+  activeStreak: number;
+  loggedDaysCount: number;
+  totalProtein: number;
+  totalCarbs: number;
+  totalFats: number;
+}): BentoGridData {
+  const loggedDays = userStats.loggedDaysCount || 0;
+  const habitScore = Math.min(100, Math.round((loggedDays / 7) * 100));
+  let habitRating = "Building Habit 🌱";
+  if (habitScore >= 85) habitRating = "Unstoppable 🔥";
+  else if (habitScore >= 57) habitRating = "Solid Progress 💪";
+  else if (habitScore >= 28) habitRating = "Getting Started 🚀";
+
+  const totalMacroGrams = userStats.totalProtein + userStats.totalCarbs + userStats.totalFats;
+  let pPct = 30;
+  let cPct = 45;
+  let fPct = 25;
+  if (totalMacroGrams > 0) {
+    pPct = Math.round((userStats.totalProtein / totalMacroGrams) * 100);
+    cPct = Math.round((userStats.totalCarbs / totalMacroGrams) * 100);
+    fPct = 100 - pPct - cPct;
+  }
+  const macroRatioText = `${pPct}% P • ${cPct}% C • ${fPct}% F`;
+  const macroHarmonyScore = pPct >= 25 ? 88 : 70;
+
+  const weightDiff = Math.abs(userStats.weight - userStats.targetWeight);
+  let projectedWeeks = 4;
+  if (weightDiff > 0) {
+    projectedWeeks = Math.max(1, Math.min(24, Math.round(weightDiff / 0.5)));
+  }
+  const targetDate = new Date();
+  targetDate.setDate(targetDate.getDate() + projectedWeeks * 7);
+  const estimatedGoalDate = targetDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  let coachTitle = "AI Performance Insights";
+  let coachInsight = "Maintain your logging momentum! Consistently tracking food and water is the #1 key to body transformation.";
+  let actionableTip = "Aim to hit your daily protein baseline to maximize recovery.";
+
+  if (userStats.goal.toLowerCase().includes("lose")) {
+    coachInsight = `You're tracking towards ${userStats.targetWeight} kg. Maintain a steady 400-500 kcal daily deficit with high protein to preserve lean muscle.`;
+    actionableTip = `Pacing nicely towards ${userStats.targetWeight} kg goal by ${estimatedGoalDate}.`;
+  } else if (userStats.goal.toLowerCase().includes("gain")) {
+    coachInsight = `Targeting muscle hypertrophy to ${userStats.targetWeight} kg. Pair your surplus calories with progressive weight training 4 days a week.`;
+    actionableTip = `Focus on clean complex carbs & 2g protein per kg bodyweight.`;
+  }
+
+  return {
+    coachTitle,
+    coachInsight,
+    actionableTip,
+    habitScore,
+    habitRating,
+    projectedWeeks,
+    estimatedGoalDate,
+    weightTrendStatus: weightDiff === 0 ? "Goal Reached! 🎯" : `${weightDiff.toFixed(1)} kg to goal`,
+    macroRatioText,
+    macroHarmonyScore,
+    isFallback: true,
+  };
+}
+
+export async function generateBentoGridInsights(userStats: {
+  weight: number;
+  targetWeight: number;
+  goal: string;
+  weeklyEaten: number;
+  weeklyBurned: number;
+  weeklyWater: number;
+  activeStreak: number;
+  loggedDaysCount: number;
+  totalProtein: number;
+  totalCarbs: number;
+  totalFats: number;
+}): Promise<BentoGridData> {
+  const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY || "";
+  const fallback = calculateFallbackBentoGrid(userStats);
+
+  // Compute exact deterministic values directly from database numbers
+  const exactHabitScore = fallback.habitScore;
+  const exactHabitRating = fallback.habitRating;
+  const exactProjectedWeeks = fallback.projectedWeeks;
+  const exactEstimatedGoalDate = fallback.estimatedGoalDate;
+  const exactWeightTrendStatus = fallback.weightTrendStatus;
+  const exactMacroRatioText = fallback.macroRatioText;
+  const exactMacroHarmonyScore = fallback.macroHarmonyScore;
+
+  if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY") {
+    return fallback;
+  }
+
+  const prompt = `Act as an elite AI sports scientist & master nutritionist analyzing live database health logs.
+User Profile & Real-Time Data:
+- Current Weight: ${userStats.weight} kg
+- Target Weight: ${userStats.targetWeight} kg
+- Goal: ${userStats.goal}
+- Weekly Calories Consumed: ${userStats.weeklyEaten} kcal
+- Weekly Calories Burned: ${userStats.weeklyBurned} kcal
+- Weekly Water Intake: ${userStats.weeklyWater} L
+- Active Logging Streak: ${userStats.activeStreak} days
+- Days Logged This Week: ${userStats.loggedDaysCount} of 7 days
+- Total Protein Logged: ${userStats.totalProtein}g
+- Total Carbs Logged: ${userStats.totalCarbs}g
+- Total Fats Logged: ${userStats.totalFats}g
+
+Produce a JSON object with this exact structure:
+{
+  "coachTitle": "Short catchy title (max 4 words, e.g. 'Peak Metabolic Momentum')",
+  "coachInsight": "Actionable, highly personalized 2-sentence feedback based on their actual numbers (max 35 words).",
+  "actionableTip": "One direct action tip (max 12 words, e.g. 'Add 40g protein on workout days')."
+}`;
+
+  try {
+    const modelsToTry = [
+      "gemini-3.6-flash",
+      "gemini-flash-latest",
+      "gemini-3.5-flash",
+      "gemini-2.5-flash-lite",
+    ];
+
+    let data = null;
+    for (const model of modelsToTry) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.0,
+            },
+          }),
+        });
+
+        if (response.ok) {
+          data = await response.json();
+          break;
+        }
+      } catch (e) { }
+    }
+
+    if (!data) return fallback;
+
+    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!responseText) return fallback;
+
+    const parsed = JSON.parse(responseText.trim());
+    return {
+      coachTitle: String(parsed.coachTitle || fallback.coachTitle),
+      coachInsight: String(parsed.coachInsight || fallback.coachInsight),
+      actionableTip: String(parsed.actionableTip || fallback.actionableTip),
+      habitScore: exactHabitScore,
+      habitRating: exactHabitRating,
+      projectedWeeks: exactProjectedWeeks,
+      estimatedGoalDate: exactEstimatedGoalDate,
+      weightTrendStatus: exactWeightTrendStatus,
+      macroRatioText: exactMacroRatioText,
+      macroHarmonyScore: exactMacroHarmonyScore,
+      isFallback: false,
+    };
+  } catch (err) {
+    console.error("Gemini Bento Grid Insights generation error, using fallback:", err);
+    return fallback;
+  }
+}
