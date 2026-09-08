@@ -70,9 +70,12 @@ export async function getUserProfile(userId: string) {
       return userDocSnap.data();
     }
     return null;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching user profile from Firestore:", error);
-    return null;
+    if (error?.code === "permission-denied" || error?.message?.includes("permissions")) {
+      console.warn("Firestore permission-denied: Check Firestore Security Rules in Firebase Console for project 'tarique-9ff49'.");
+    }
+    throw error;
   }
 }
 
@@ -91,8 +94,11 @@ export async function updateUserProfile(userId: string, data: any) {
       { merge: true }
     );
     console.log("User profile successfully updated in Firestore:", userId);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error updating user profile in Firestore:", error);
+    if (error?.code === "permission-denied" || error?.message?.includes("permissions")) {
+      console.warn("Firestore permission-denied: Check Firestore Security Rules in Firebase Console for project 'tarique-9ff49'.");
+    }
     throw error;
   }
 }

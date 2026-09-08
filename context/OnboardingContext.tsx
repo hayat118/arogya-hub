@@ -85,8 +85,12 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setIsLoadingOnboarding(false);
         return false;
       }
-    } catch (error) {
-      console.error("Error in checkOnboardingStatus:", error);
+    } catch (error: any) {
+      if (error?.code === "permission-denied" || error?.message?.includes("permissions")) {
+        console.warn("Firestore query restricted (missing permissions). Relying on local AsyncStorage onboarding cache.");
+      } else {
+        console.error("Error in checkOnboardingStatus:", error);
+      }
       // Fail-safe: try to use local AsyncStorage data if firestore query fails (offline support)
       try {
         const localData = await AsyncStorage.getItem(`onboarding_data_${user.id}`);
@@ -139,11 +143,18 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         isOnboarded: true,
       };
 
-      // 1. Save to AsyncStorage
+      // 1. Save to AsyncStorage (local source of truth)
       await AsyncStorage.setItem(`onboarding_data_${user.id}`, JSON.stringify(mergedData));
 
-      // 2. Save to Firestore
-      await updateUserProfile(user.id, mergedData);
+      // 2. Save to Firestore (cloud sync fallback)
+      try {
+        await updateUserProfile(user.id, mergedData);
+      } catch (firestoreErr) {
+        console.warn(
+          "Firestore sync skipped due to permissions/network. Onboarding data saved locally:",
+          firestoreErr
+        );
+      }
 
       setHasCompletedOnboarding(true);
     } catch (error) {
