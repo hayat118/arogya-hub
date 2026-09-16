@@ -17,6 +17,7 @@ import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../services/firebase";
 import Colors from "../constants/Colors";
 import * as Haptics from "expo-haptics";
+import NonTodayLogModal from "../components/NonTodayLogModal";
 
 export default function LogWater() {
   const { user } = useUser();
@@ -26,6 +27,14 @@ export default function LogWater() {
   const [waterMl, setWaterMl] = useState<number>(0);
   const [activeDate, setActiveDate] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isNonTodayModalVisible, setIsNonTodayModalVisible] = useState(false);
+
+  const getTodayDateString = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+      today.getDate()
+    ).padStart(2, "0")}`;
+  };
 
   const maxMl = 1000; // 4 full glasses max
 
@@ -63,12 +72,21 @@ export default function LogWater() {
     }
   };
 
-  const handleLogWater = async () => {
+  const handleLogWater = async (overrideDate?: string | any) => {
     if (!user) return;
     if (waterMl === 0) {
       alert("Please add some water intake to log.");
       return;
     }
+
+    const targetDate = typeof overrideDate === "string" ? overrideDate : activeDate;
+    const todayStr = getTodayDateString();
+
+    if (targetDate !== todayStr) {
+      setIsNonTodayModalVisible(true);
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -78,7 +96,7 @@ export default function LogWater() {
         title: "Water Intake",
         type: "water",
         amount: waterMl / 1000,
-        date: activeDate,
+        date: targetDate,
         createdAt: serverTimestamp(),
       });
 
@@ -93,6 +111,18 @@ export default function LogWater() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSwitchToTodayAndLogWater = async () => {
+    const todayStr = getTodayDateString();
+    setActiveDate(todayStr);
+    try {
+      await AsyncStorage.setItem("active_calendar_date", todayStr);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsNonTodayModalVisible(false);
+    handleLogWater(todayStr);
   };
 
   // Dynamically render glass images in centered flex rows
@@ -226,6 +256,14 @@ export default function LogWater() {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Non-Today Logging Warning Modal */}
+      <NonTodayLogModal
+        visible={isNonTodayModalVisible}
+        activeDate={activeDate}
+        onClose={() => setIsNonTodayModalVisible(false)}
+        onSwitchToToday={handleSwitchToTodayAndLogWater}
+      />
     </SafeAreaView>
   );
 }

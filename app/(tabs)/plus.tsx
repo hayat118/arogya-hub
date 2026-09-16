@@ -20,6 +20,7 @@ import { db } from "../../services/firebase";
 import Colors from "../../constants/Colors";
 import * as Haptics from "expo-haptics";
 import { menuNavigationState } from "./_layout";
+import NonTodayLogModal from "../../components/NonTodayLogModal";
 
 export default function PlusScreen() {
   const { user } = useUser();
@@ -60,6 +61,14 @@ export default function PlusScreen() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [isNonTodayModalVisible, setIsNonTodayModalVisible] = useState(false);
+
+  const getTodayDateString = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+      today.getDate()
+    ).padStart(2, "0")}`;
+  };
 
   // Resolve current active calendar date on mount
   useEffect(() => {
@@ -82,9 +91,17 @@ export default function PlusScreen() {
     getActiveDate();
   }, []);
 
-  const handleSave = async () => {
+  const handleSave = async (overrideDate?: string | any) => {
     if (!user) return;
     setErrorMsg("");
+
+    const targetDate = typeof overrideDate === "string" ? overrideDate : activeDate;
+    const todayStr = getTodayDateString();
+
+    if (targetDate !== todayStr) {
+      setIsNonTodayModalVisible(true);
+      return;
+    }
 
     // Validation
     if (logType !== "water") {
@@ -112,7 +129,7 @@ export default function PlusScreen() {
           title: "Water Intake",
           type: "water",
           amount: Number(waterAmount),
-          date: activeDate,
+          date: targetDate,
           createdAt: serverTimestamp(),
         });
       } else {
@@ -125,7 +142,7 @@ export default function PlusScreen() {
           fats: logType === "meal" ? Math.round(Number(fats || 0)) : 0,
           workoutType: logType === "workout" ? "manual" : undefined,
           intensity: logType === "workout" ? "medium" : undefined,
-          date: activeDate,
+          date: targetDate,
           createdAt: serverTimestamp(),
         });
       }
@@ -140,6 +157,18 @@ export default function PlusScreen() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSwitchToTodayAndSave = async () => {
+    const todayStr = getTodayDateString();
+    setActiveDate(todayStr);
+    try {
+      await AsyncStorage.setItem("active_calendar_date", todayStr);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsNonTodayModalVisible(false);
+    handleSave(todayStr);
   };
 
   const formattedDisplayDate = () => {
@@ -391,6 +420,14 @@ export default function PlusScreen() {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Non-Today Logging Warning Modal */}
+      <NonTodayLogModal
+        visible={isNonTodayModalVisible}
+        activeDate={activeDate}
+        onClose={() => setIsNonTodayModalVisible(false)}
+        onSwitchToToday={handleSwitchToTodayAndSave}
+      />
     </SafeAreaView>
   );
 }

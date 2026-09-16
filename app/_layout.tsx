@@ -55,7 +55,9 @@ function InitialLayout() {
       segments[0] === "log-water" ||
       segments[0] === "food-search" ||
       segments[0] === "log-food-details" ||
-      segments[0] === "analyzing-food";
+      segments[0] === "analyzing-food" ||
+      segments[0] === "terms-and-conditions" ||
+      segments[0] === "privacy-policy";
 
     if (isSignedIn) {
       if (hasCompletedOnboarding) {
@@ -100,6 +102,8 @@ function InitialLayout() {
       <Stack.Screen name="food-search" />
       <Stack.Screen name="log-food-details" />
       <Stack.Screen name="analyzing-food" />
+      <Stack.Screen name="terms-and-conditions" />
+      <Stack.Screen name="privacy-policy" />
     </Stack>
   );
 }

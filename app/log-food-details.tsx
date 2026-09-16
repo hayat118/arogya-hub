@@ -23,6 +23,7 @@ import { db } from "../services/firebase";
 import Colors from "../constants/Colors";
 import * as Haptics from "expo-haptics";
 import { menuNavigationState } from "./(tabs)/_layout";
+import NonTodayLogModal from "../components/NonTodayLogModal";
 
 export default function LogFoodDetails() {
   const { user } = useUser();
@@ -66,6 +67,14 @@ export default function LogFoodDetails() {
 
   const [activeDate, setActiveDate] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isNonTodayModalVisible, setIsNonTodayModalVisible] = useState(false);
+
+  const getTodayDateString = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+      today.getDate()
+    ).padStart(2, "0")}`;
+  };
 
   // Base numerical reference values for scaling calculations
   const baseMultiplier = React.useMemo(() => {
@@ -121,8 +130,16 @@ export default function LogFoodDetails() {
     }
   };
 
-  const handleLogFood = async () => {
+  const handleLogFood = async (overrideDate?: string | any) => {
     if (!user) return;
+
+    const targetDate = typeof overrideDate === "string" ? overrideDate : activeDate;
+    const todayStr = getTodayDateString();
+
+    if (targetDate !== todayStr) {
+      setIsNonTodayModalVisible(true);
+      return;
+    }
 
     const numCalories = parseInt(calories, 10);
     const numProtein = parseFloat(protein);
@@ -152,7 +169,7 @@ export default function LogFoodDetails() {
         carbs: Math.round(numCarbs),
         fats: Math.round(numFats),
         servingSize: formattedServingSize,
-        date: activeDate,
+        date: targetDate,
         createdAt: serverTimestamp(),
       });
 
@@ -168,6 +185,18 @@ export default function LogFoodDetails() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSwitchToTodayAndLogFood = async () => {
+    const todayStr = getTodayDateString();
+    setActiveDate(todayStr);
+    try {
+      await AsyncStorage.setItem("active_calendar_date", todayStr);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsNonTodayModalVisible(false);
+    handleLogFood(todayStr);
   };
 
   return (
@@ -317,6 +346,14 @@ export default function LogFoodDetails() {
           </View>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
+
+      {/* Non-Today Logging Warning Modal */}
+      <NonTodayLogModal
+        visible={isNonTodayModalVisible}
+        activeDate={activeDate}
+        onClose={() => setIsNonTodayModalVisible(false)}
+        onSwitchToToday={handleSwitchToTodayAndLogFood}
+      />
     </SafeAreaView>
   );
 }
