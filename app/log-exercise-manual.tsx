@@ -20,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Colors from "../constants/Colors";
 import { db } from "../services/firebase";
 import { menuNavigationState } from "./(tabs)/_layout";
+import NonTodayLogModal from "../components/NonTodayLogModal";
 
 export default function LogExerciseManual() {
   const router = useRouter();
@@ -34,6 +35,14 @@ export default function LogExerciseManual() {
 
   // Active Date state
   const [activeDate, setActiveDate] = useState("");
+  const [isNonTodayModalVisible, setIsNonTodayModalVisible] = useState(false);
+
+  const getTodayDateString = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+      today.getDate()
+    ).padStart(2, "0")}`;
+  };
 
   useEffect(() => {
     async function loadActiveDate() {
@@ -55,9 +64,17 @@ export default function LogExerciseManual() {
     loadActiveDate();
   }, []);
 
-  const handleLogWorkout = async () => {
+  const handleLogWorkout = async (overrideDate?: string | any) => {
     if (!user) return;
     setErrorMsg("");
+
+    const targetDate = typeof overrideDate === "string" ? overrideDate : activeDate;
+    const todayStr = getTodayDateString();
+
+    if (targetDate !== todayStr) {
+      setIsNonTodayModalVisible(true);
+      return;
+    }
 
     // Validations
     if (!title.trim()) {
@@ -80,7 +97,7 @@ export default function LogExerciseManual() {
         intensity: "medium",
         calories: Math.round(Number(calories)),
         duration: duration ? Math.round(Number(duration)) : 0,
-        date: activeDate,
+        date: targetDate,
         createdAt: serverTimestamp(),
       });
 
@@ -96,6 +113,18 @@ export default function LogExerciseManual() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSwitchToTodayAndLogWorkout = async () => {
+    const todayStr = getTodayDateString();
+    setActiveDate(todayStr);
+    try {
+      await AsyncStorage.setItem("active_calendar_date", todayStr);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsNonTodayModalVisible(false);
+    handleLogWorkout(todayStr);
   };
 
   return (
@@ -212,6 +241,14 @@ export default function LogExerciseManual() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Non-Today Logging Warning Modal */}
+      <NonTodayLogModal
+        visible={isNonTodayModalVisible}
+        activeDate={activeDate}
+        onClose={() => setIsNonTodayModalVisible(false)}
+        onSwitchToToday={handleSwitchToTodayAndLogWorkout}
+      />
     </SafeAreaView>
   );
 }

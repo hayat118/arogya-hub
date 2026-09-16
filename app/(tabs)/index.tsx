@@ -19,6 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle } from "react-native-svg";
 import HomeHeader from "../../components/HomeHeader";
 import WeeklyCalendar from "../../components/WeeklyCalendar";
+import NonTodayLogModal from "../../components/NonTodayLogModal";
 import Colors from "../../constants/Colors";
 import { db } from "../../services/firebase";
 import { calculateFallbackTargets } from "../../services/gemini";
@@ -79,6 +80,9 @@ export default function Dashboard() {
   // Real-time logs state
   const [logs, setLogs] = useState<any[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(true);
+
+  // Non-today logging warning modal state
+  const [isNonTodayModalVisible, setIsNonTodayModalVisible] = useState(false);
 
   // 1. Sync selectedDateId to AsyncStorage so plus screen knows which date we're editing
   useEffect(() => {
@@ -323,8 +327,16 @@ export default function Dashboard() {
   };
 
   // Quick add water log entry (+0.25 Liters / 1 Glass)
-  const handleQuickAddWater = async () => {
+  const handleQuickAddWater = async (overrideDate?: string | any) => {
     if (!user) return;
+    const targetDate = typeof overrideDate === "string" ? overrideDate : selectedDateId;
+    const todayStr = getTodayDateString();
+
+    if (targetDate !== todayStr) {
+      setIsNonTodayModalVisible(true);
+      return;
+    }
+
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => { });
       const userLogsCollection = collection(db, "users", user.id, "logs");
@@ -332,12 +344,24 @@ export default function Dashboard() {
         title: "Water Intake",
         type: "water",
         amount: 0.25,
-        date: selectedDateId,
+        date: targetDate,
         createdAt: new Date().toISOString(),
       });
     } catch (err) {
       console.error("Firestore quick add water error:", err);
     }
+  };
+
+  const handleSwitchToTodayAndAddWater = async () => {
+    const todayStr = getTodayDateString();
+    setSelectedDateId(todayStr);
+    try {
+      await AsyncStorage.setItem("active_calendar_date", todayStr);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsNonTodayModalVisible(false);
+    handleQuickAddWater(todayStr);
   };
 
   // Dynamic calculations from real-time database logs
@@ -714,22 +738,6 @@ export default function Dashboard() {
           </View>
 
 
-
-          {/* AI Daily Advice & Insights */}
-          {aiAdvice ? (
-            <>
-              <Text style={styles.sectionTitle}>AI Coach Insight</Text>
-              <View style={styles.insightsContainer}>
-                <View style={styles.adviceCard}>
-                  <View style={styles.adviceHeader}>
-                    <Ionicons name="sparkles" size={16} color={Colors.dark.primary} />
-                    <Text style={styles.adviceTitle}>AI COACH INSIGHT</Text>
-                  </View>
-                  <Text style={styles.adviceText}>{aiAdvice}</Text>
-                </View>
-              </View>
-            </>
-          ) : null}
 
           {/* Daily Logs List */}
           <Text style={styles.sectionTitle}>
@@ -1148,6 +1156,14 @@ export default function Dashboard() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* Non-Today Logging Warning Modal */}
+      <NonTodayLogModal
+        visible={isNonTodayModalVisible}
+        activeDate={selectedDateId}
+        onClose={() => setIsNonTodayModalVisible(false)}
+        onSwitchToToday={handleSwitchToTodayAndAddWater}
+      />
     </View>
   );
 }

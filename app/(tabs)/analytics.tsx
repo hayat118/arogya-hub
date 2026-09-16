@@ -3,7 +3,8 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { useFocusEffect } from "expo-router";
 import {
   ActivityIndicator,
   Dimensions,
@@ -63,7 +64,7 @@ export default function Analytics() {
   const [isStreakModalVisible, setIsStreakModalVisible] = useState(false);
 
   // Calorie Bar Chart tab state ("burned" | "consumed") & Independent Week Offsets
-  const [calorieChartMode, setCalorieChartMode] = useState<"burned" | "consumed">("burned");
+  const [calorieChartMode, setCalorieChartMode] = useState<"burned" | "consumed">("consumed");
   const [calorieWeekOffset, setCalorieWeekOffset] = useState<number>(0);
   const [waterWeekOffset, setWaterWeekOffset] = useState<number>(0);
   const screenWidth = Dimensions.get("window").width;
@@ -148,39 +149,39 @@ export default function Analytics() {
   };
 
   // 1. Fetch user weight, goal & target from profile
-  useEffect(() => {
+  const fetchProfile = useCallback(async () => {
     if (!user) return;
-    const fetchProfile = async () => {
-      try {
-        const userDocRef = doc(db, "users", user.id);
-        const snap = await getDoc(userDocRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data.weight) setProfileWeight(String(data.weight));
-          if (data.targetWeight) setTargetWeight(String(data.targetWeight));
-          if (data.goal) setProfileGoal(String(data.goal));
-        }
-
-        // Check local storage fallback
-        const cachedOnboarding =
-          (await AsyncStorage.getItem(`onboarding_data_${user.id}`)) ||
-          (await AsyncStorage.getItem("onboarding_data"));
-        if (cachedOnboarding) {
-          const parsed = JSON.parse(cachedOnboarding);
-          if (parsed.weight && !snap.data()?.weight) {
-            setProfileWeight(String(parsed.weight));
-          }
-          if (parsed.goal && !snap.data()?.goal) {
-            setProfileGoal(String(parsed.goal));
-          }
-        }
-      } catch (err) {
-        console.error("Error loading analytics profile weight & goal:", err);
+    try {
+      // Check local storage fallback first for immediate synchronization
+      const cachedOnboarding =
+        (await AsyncStorage.getItem(`onboarding_data_${user.id}`)) ||
+        (await AsyncStorage.getItem("onboarding_data"));
+      if (cachedOnboarding) {
+        const parsed = JSON.parse(cachedOnboarding);
+        if (parsed.weight !== undefined) setProfileWeight(String(parsed.weight));
+        if (parsed.targetWeight !== undefined) setTargetWeight(String(parsed.targetWeight));
+        if (parsed.goal) setProfileGoal(String(parsed.goal));
       }
-    };
 
-    fetchProfile();
+      // Check Firestore document
+      const userDocRef = doc(db, "users", user.id);
+      const snap = await getDoc(userDocRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.weight !== undefined) setProfileWeight(String(data.weight));
+        if (data.targetWeight !== undefined) setTargetWeight(String(data.targetWeight));
+        if (data.goal) setProfileGoal(String(data.goal));
+      }
+    } catch (err) {
+      console.error("Error loading analytics profile weight & goal:", err);
+    }
   }, [user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfile();
+    }, [fetchProfile])
+  );
 
   // 2. Compute current week dates (Mon - Sun) and listen to Firebase logs
   useEffect(() => {
@@ -745,129 +746,6 @@ export default function Analytics() {
             </TouchableOpacity>
           </View>
 
-          {/* AI Bento Grid Section - Powered by Gemini AI & Live Database Logs */}
-          <View style={styles.bentoSectionContainer}>
-            <View style={styles.bentoHeaderCol}>
-              <View style={styles.bentoTitleGroup}>
-                <Ionicons name="sparkles" size={18} color="#F59E0B" />
-                <Text style={styles.sectionHeadingNoMargin}>AI Health & Performance Insights</Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.refreshBentoBtnBelow}
-                onPress={() => computeAndFetchBento(true)}
-                disabled={isBentoLoading}
-                activeOpacity={0.7}
-              >
-                <Ionicons
-                  name="sync-outline"
-                  size={13}
-                  color={isBentoLoading ? Colors.dark.textMuted : "#F59E0B"}
-                />
-                <Text style={styles.refreshBentoText}>{isBentoLoading ? "Analyzing..." : "Refresh AI Insights"}</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Bento Grid Layout - All 4 Cards Render Immediately */}
-            <View style={styles.bentoGridWrapper}>
-              {/* Card 1: Featured AI Coach Insight */}
-              <View style={styles.bentoCardFeatured}>
-                <View style={styles.bentoFeaturedHeader}>
-                  <View style={styles.aiBadge}>
-                    {isBentoLoading ? (
-                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 2 }} />
-                    ) : (
-                      <Ionicons name="hardware-chip-outline" size={13} color="#10B981" />
-                    )}
-                    <Text style={styles.aiBadgeText}>
-                      {isBentoLoading
-                        ? "AI Analyzing Live Logs..."
-                        : bentoData?.generatedAtFormatted
-                          ? `Gemini AI • ${bentoData.generatedAtFormatted}`
-                          : "Gemini AI Analysis"}
-                    </Text>
-                  </View>
-                  <Text style={styles.bentoTagText}>{bentoData?.weightTrendStatus || "Live Data"}</Text>
-                </View>
-
-                {isBentoLoading ? (
-                  <View style={styles.skeletonContainer}>
-                    <Text style={styles.bentoCoachTitle}>Analyzing Your Performance...</Text>
-                    <View style={[styles.skeletonLine, { width: "95%" }]} />
-                    <View style={[styles.skeletonLine, { width: "80%" }]} />
-                    <View style={[styles.skeletonLine, { width: "65%" }]} />
-                    <View style={[styles.bentoTipBanner, { marginTop: 6 }]}>
-                      <Ionicons name="sparkles-outline" size={14} color="#F59E0B" />
-                      <Text style={styles.bentoTipText}>Processing energy & metabolic trends...</Text>
-                    </View>
-                  </View>
-                ) : (
-                  <>
-                    <Text style={styles.bentoCoachTitle}>{bentoData?.coachTitle || "AI Performance Insights"}</Text>
-                    <Text style={styles.bentoCoachInsight}>{bentoData?.coachInsight || "Analyzing live database logs..."}</Text>
-
-                    {bentoData?.actionableTip ? (
-                      <View style={styles.bentoTipBanner}>
-                        <Ionicons name="bulb-outline" size={14} color="#F59E0B" />
-                        <Text style={styles.bentoTipText}>{bentoData.actionableTip}</Text>
-                      </View>
-                    ) : null}
-                  </>
-                )}
-              </View>
-
-              {/* Row 2: 2 Column Bento Grid Cards */}
-              <View style={styles.bentoRow}>
-                {/* Card 2: Habit Consistency Score */}
-                <View style={[styles.bentoCardSmall, styles.bentoCardHabit]}>
-                  <View style={styles.bentoCardTop}>
-                    <View style={styles.bentoIconFrameAmber}>
-                      <Ionicons name="flame" size={16} color="#F59E0B" />
-                    </View>
-                    <Text style={styles.bentoSmallTitle}>Habit Score</Text>
-                  </View>
-                  <View style={styles.bentoScoreContainer}>
-                    <Text style={styles.bentoScoreVal}>{bentoData?.habitScore || 0}%</Text>
-                    <Text style={styles.bentoScoreRating}>{bentoData?.habitRating || "Building"}</Text>
-                  </View>
-                  <View style={styles.bentoProgressBarBg}>
-                    <View style={[styles.bentoProgressBarFill, { width: `${bentoData?.habitScore || 0}%` }]} />
-                  </View>
-                </View>
-
-                {/* Card 3: Weight Goal Forecast */}
-                <View style={[styles.bentoCardSmall, styles.bentoCardForecast]}>
-                  <View style={styles.bentoCardTop}>
-                    <View style={styles.bentoIconFrameBlue}>
-                      <Ionicons name="trending-down" size={16} color="#3B82F6" />
-                    </View>
-                    <Text style={styles.bentoSmallTitle}>Goal Forecast</Text>
-                  </View>
-                  <Text style={styles.bentoForecastWeeks}>
-                    {bentoData?.projectedWeeks ? `${bentoData.projectedWeeks} Wks` : "On Track"}
-                  </Text>
-                  <Text style={styles.bentoForecastSub}>Target: {bentoData?.estimatedGoalDate}</Text>
-                </View>
-              </View>
-
-              {/* Card 4: Macro Harmony Ratio */}
-              <View style={styles.bentoCardFullWidth}>
-                <View style={styles.bentoCardTopRow}>
-                  <View style={styles.bentoHeaderLeft}>
-                    <View style={styles.bentoIconFrameGreen}>
-                      <Ionicons name="nutrition" size={16} color="#10B981" />
-                    </View>
-                    <Text style={styles.bentoCardTitle}>Macro Harmony Ratio</Text>
-                  </View>
-                  <View style={styles.macroScoreChip}>
-                    <Text style={styles.macroScoreChipText}>{bentoData?.macroHarmonyScore || 80}/100 Score</Text>
-                  </View>
-                </View>
-                <Text style={styles.bentoMacroRatioText}>{bentoData?.macroRatioText || "30% P • 45% C • 25% F"}</Text>
-              </View>
-            </View>
-          </View>
-
           {/* 7-Day Weekly Calorie Breakdown Bar Chart Card */}
           <Text style={styles.sectionHeading}>Weekly Calorie Breakdown</Text>
           <View style={styles.chartCardContainer} {...caloriePanResponder.panHandlers}>
@@ -914,32 +792,6 @@ export default function Analytics() {
                 <TouchableOpacity
                   style={[
                     styles.chartTabPill,
-                    calorieChartMode === "burned" && styles.chartTabPillBurnedActive,
-                  ]}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
-                    setCalorieChartMode("burned");
-                  }}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons
-                    name="flame-outline"
-                    size={13}
-                    color={calorieChartMode === "burned" ? "#F59E0B" : Colors.dark.textMuted}
-                  />
-                  <Text
-                    style={[
-                      styles.chartTabPillText,
-                      calorieChartMode === "burned" && styles.chartTabPillTextBurnedActive,
-                    ]}
-                  >
-                    Burned
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.chartTabPill,
                     calorieChartMode === "consumed" && styles.chartTabPillConsumedActive,
                   ]}
                   onPress={() => {
@@ -960,6 +812,32 @@ export default function Analytics() {
                     ]}
                   >
                     Consumed
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.chartTabPill,
+                    calorieChartMode === "burned" && styles.chartTabPillBurnedActive,
+                  ]}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
+                    setCalorieChartMode("burned");
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons
+                    name="flame-outline"
+                    size={13}
+                    color={calorieChartMode === "burned" ? "#F59E0B" : Colors.dark.textMuted}
+                  />
+                  <Text
+                    style={[
+                      styles.chartTabPillText,
+                      calorieChartMode === "burned" && styles.chartTabPillTextBurnedActive,
+                    ]}
+                  >
+                    Burned
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1231,6 +1109,125 @@ export default function Analytics() {
               <View style={styles.chartFooterStat}>
                 <Text style={styles.chartFooterStatLabel}>Peak Day</Text>
                 <Text style={styles.chartFooterStatVal}>{peakWaterDayL} L</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* AI Bento Grid Section in a Separate Card Box Container */}
+          <Text style={styles.sectionHeading}>AI Performance Insights</Text>
+          <View style={styles.bentoSectionContainer}>
+            <View style={styles.bentoHeaderCol}>
+              <TouchableOpacity
+                style={styles.refreshBentoBtnBelow}
+                onPress={() => computeAndFetchBento(true)}
+                disabled={isBentoLoading}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="sync-outline"
+                  size={13}
+                  color={isBentoLoading ? Colors.dark.textMuted : "#F59E0B"}
+                />
+                <Text style={styles.refreshBentoText}>{isBentoLoading ? "Analyzing..." : "Refresh AI Insights"}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Bento Grid Layout - All 4 Cards Render Immediately */}
+            <View style={styles.bentoGridWrapper}>
+              {/* Card 1: Featured AI Coach Insight */}
+              <View style={styles.bentoCardFeatured}>
+                <View style={styles.bentoFeaturedHeader}>
+                  <View style={styles.aiBadge}>
+                    {isBentoLoading ? (
+                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 2 }} />
+                    ) : (
+                      <Ionicons name="hardware-chip-outline" size={13} color="#10B981" />
+                    )}
+                    <Text style={styles.aiBadgeText}>
+                      {isBentoLoading
+                        ? "AI Analyzing Live Logs..."
+                        : bentoData?.generatedAtFormatted
+                          ? `Gemini AI • ${bentoData.generatedAtFormatted}`
+                          : "Gemini AI Analysis"}
+                    </Text>
+                  </View>
+                  <Text style={styles.bentoTagText}>{bentoData?.weightTrendStatus || "Live Data"}</Text>
+                </View>
+
+                {isBentoLoading ? (
+                  <View style={styles.skeletonContainer}>
+                    <Text style={styles.bentoCoachTitle}>Analyzing Your Performance...</Text>
+                    <View style={[styles.skeletonLine, { width: "95%" }]} />
+                    <View style={[styles.skeletonLine, { width: "80%" }]} />
+                    <View style={[styles.skeletonLine, { width: "65%" }]} />
+                    <View style={[styles.bentoTipBanner, { marginTop: 6 }]}>
+                      <Ionicons name="sparkles-outline" size={14} color="#F59E0B" />
+                      <Text style={styles.bentoTipText}>Processing energy & metabolic trends...</Text>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.bentoCoachTitle}>{bentoData?.coachTitle || "AI Performance Insights"}</Text>
+                    <Text style={styles.bentoCoachInsight}>{bentoData?.coachInsight || "Analyzing live database logs..."}</Text>
+
+                    {bentoData?.actionableTip ? (
+                      <View style={styles.bentoTipBanner}>
+                        <Ionicons name="bulb-outline" size={14} color="#F59E0B" />
+                        <Text style={styles.bentoTipText}>{bentoData.actionableTip}</Text>
+                      </View>
+                    ) : null}
+                  </>
+                )}
+              </View>
+
+              {/* Row 2: 2 Column Bento Grid Cards */}
+              <View style={styles.bentoRow}>
+                {/* Card 2: Habit Consistency Score */}
+                <View style={[styles.bentoCardSmall, styles.bentoCardHabit]}>
+                  <View style={styles.bentoCardTop}>
+                    <View style={styles.bentoIconFrameAmber}>
+                      <Ionicons name="flame" size={16} color="#F59E0B" />
+                    </View>
+                    <Text style={styles.bentoSmallTitle}>Habit Score</Text>
+                  </View>
+                  <View style={styles.bentoScoreContainer}>
+                    <Text style={styles.bentoScoreVal}>{bentoData?.habitScore || 0}%</Text>
+                    <Text style={styles.bentoScoreRating}>{bentoData?.habitRating || "Building"}</Text>
+                  </View>
+                  <View style={styles.bentoProgressBarBg}>
+                    <View style={[styles.bentoProgressBarFill, { width: `${bentoData?.habitScore || 0}%` }]} />
+                  </View>
+                </View>
+
+                {/* Card 3: Weight Goal Forecast */}
+                <View style={[styles.bentoCardSmall, styles.bentoCardForecast]}>
+                  <View style={styles.bentoCardTop}>
+                    <View style={styles.bentoIconFrameBlue}>
+                      <Ionicons name="trending-down" size={16} color="#3B82F6" />
+                    </View>
+                    <Text style={styles.bentoSmallTitle}>Goal Forecast</Text>
+                  </View>
+                  <Text style={styles.bentoForecastWeeks}>
+                    {bentoData?.projectedWeeks ? `${bentoData.projectedWeeks} Wks` : "On Track"}
+                  </Text>
+                  <Text style={styles.bentoForecastSub}>Target: {bentoData?.estimatedGoalDate}</Text>
+                </View>
+              </View>
+
+              {/* Card 4: Macro Harmony Ratio */}
+              <View style={styles.bentoCardFullWidth}>
+                <View style={styles.bentoCardTopRow}>
+                  <View style={styles.bentoHeaderLeft}>
+                    <View style={styles.bentoIconFrameGreen}>
+                      <Ionicons name="nutrition" size={16} color="#10B981" />
+                    </View>
+                    <Text style={styles.bentoCardTitle}>Macro Harmony Ratio</Text>
+                  </View>
+                  <View style={styles.macroScoreChip}>
+                    <Text style={styles.macroScoreChipText}>{bentoData?.macroHarmonyScore || 80}/100 Score</Text>
+                  </View>
+                </View>
+                <Text style={styles.bentoMacroRatioText}>{bentoData?.macroRatioText || "30% P • 45% C • 25% F"}</Text>
               </View>
             </View>
           </View>
@@ -2199,9 +2196,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
-  /* Bento Grid AI Section Styles */
   bentoSectionContainer: {
-    marginBottom: 28,
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.05)",
+    padding: 16,
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   bentoHeaderCol: {
     marginBottom: 14,

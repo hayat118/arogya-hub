@@ -17,6 +17,7 @@ import { db } from "../services/firebase";
 import Colors from "../constants/Colors";
 import * as Haptics from "expo-haptics";
 import { menuNavigationState } from "./(tabs)/_layout";
+import NonTodayLogModal from "../components/NonTodayLogModal";
 
 export default function WorkoutSummary() {
   const { user } = useUser();
@@ -33,6 +34,14 @@ export default function WorkoutSummary() {
   // Active date for database logging
   const [activeDate, setActiveDate] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isNonTodayModalVisible, setIsNonTodayModalVisible] = useState(false);
+
+  const getTodayDateString = () => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+      today.getDate()
+    ).padStart(2, "0")}`;
+  };
 
   useEffect(() => {
     async function loadActiveDate() {
@@ -54,8 +63,17 @@ export default function WorkoutSummary() {
     loadActiveDate();
   }, []);
 
-  const handleLogWorkout = async () => {
+  const handleLogWorkout = async (overrideDate?: string | any) => {
     if (!user) return;
+
+    const targetDate = typeof overrideDate === "string" ? overrideDate : activeDate;
+    const todayStr = getTodayDateString();
+
+    if (targetDate !== todayStr) {
+      setIsNonTodayModalVisible(true);
+      return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -68,7 +86,7 @@ export default function WorkoutSummary() {
         intensity: intensity, // "low", "medium", "high"
         calories: calories,
         duration: duration,
-        date: activeDate,
+        date: targetDate,
         createdAt: serverTimestamp(),
       });
 
@@ -84,6 +102,18 @@ export default function WorkoutSummary() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSwitchToTodayAndLogWorkout = async () => {
+    const todayStr = getTodayDateString();
+    setActiveDate(todayStr);
+    try {
+      await AsyncStorage.setItem("active_calendar_date", todayStr);
+    } catch (e) {
+      console.error(e);
+    }
+    setIsNonTodayModalVisible(false);
+    handleLogWorkout(todayStr);
   };
 
   return (
@@ -175,6 +205,14 @@ export default function WorkoutSummary() {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* Non-Today Logging Warning Modal */}
+      <NonTodayLogModal
+        visible={isNonTodayModalVisible}
+        activeDate={activeDate}
+        onClose={() => setIsNonTodayModalVisible(false)}
+        onSwitchToToday={handleSwitchToTodayAndLogWorkout}
+      />
     </SafeAreaView>
   );
 }
