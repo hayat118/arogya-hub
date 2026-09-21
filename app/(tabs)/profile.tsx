@@ -269,6 +269,8 @@ export default function ProfileScreen() {
       router.push("/terms-and-conditions");
     } else if (title === "Privacy Policy") {
       router.push("/privacy-policy");
+    } else if (title === "Firebase Push Notifications") {
+      router.push("/admin-notifications" as any);
     } else {
       Alert.alert(title, `${title} settings will be available in the next release.`);
     }
@@ -381,6 +383,21 @@ export default function ProfileScreen() {
                 <Ionicons name="options-outline" size={20} color="#A855F7" />
               </View>
               <Text style={styles.optionText}>Preferences</Text>
+              <Ionicons name="chevron-forward" size={18} color={Colors.dark.textMuted} />
+            </TouchableOpacity>
+
+            <View style={styles.separator} />
+
+            {/* Firebase Push Notifications Admin */}
+            <TouchableOpacity
+              style={styles.optionRow}
+              activeOpacity={0.7}
+              onPress={() => handleItemPress("Firebase Push Notifications")}
+            >
+              <View style={[styles.optionIconFrame, { backgroundColor: "rgba(16, 185, 129, 0.12)" }]}>
+                <Ionicons name="notifications-outline" size={20} color="#10B981" />
+              </View>
+              <Text style={styles.optionText}>Firebase Push Notifications</Text>
               <Ionicons name="chevron-forward" size={18} color={Colors.dark.textMuted} />
             </TouchableOpacity>
 
