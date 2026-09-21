@@ -9,6 +9,10 @@ import Colors from "../../constants/Colors";
 import { saveUserProfile, db } from "../../services/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import * as Haptics from "expo-haptics";
+import {
+  registerForPushNotificationsAsync,
+  scheduleAutomatedMealAndActivityReminders,
+} from "../../services/notificationService";
 
 // Module-level global state to persist menu visibility request across screen transitions
 export const menuNavigationState = {
@@ -72,6 +76,19 @@ export default function TabsLayout() {
           .catch((err) => {
             console.error("Firebase sync error on tab layout: ", err);
           });
+
+        // 3. Register for Push Notifications & Schedule Automated Reminders
+        registerForPushNotificationsAsync(user.id)
+          .then((token) => {
+            if (token) {
+              console.log("Push Notification Token Registered:", token);
+            }
+          })
+          .catch((err) => console.warn("Push token registration error:", err));
+
+        scheduleAutomatedMealAndActivityReminders(user.id, false).catch((err) =>
+          console.warn("Schedule notifications error:", err)
+        );
       } else {
         // 3. Clear local storage session on log-out
         AsyncStorage.removeItem("user_session").catch((err) =>

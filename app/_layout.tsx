@@ -57,7 +57,8 @@ function InitialLayout() {
       segments[0] === "log-food-details" ||
       segments[0] === "analyzing-food" ||
       segments[0] === "terms-and-conditions" ||
-      segments[0] === "privacy-policy";
+      segments[0] === "privacy-policy" ||
+      segments[0] === "admin-notifications";
 
     if (isSignedIn) {
       if (hasCompletedOnboarding) {
@@ -104,6 +105,7 @@ function InitialLayout() {
       <Stack.Screen name="analyzing-food" />
       <Stack.Screen name="terms-and-conditions" />
       <Stack.Screen name="privacy-policy" />
+      <Stack.Screen name="admin-notifications" />
     </Stack>
   );
 }
