@@ -6,11 +6,9 @@ import { ActivityIndicator, View } from "react-native";
 import Colors from "../constants/Colors";
 import { OnboardingProvider, useOnboarding } from "../context/OnboardingContext";
 
-const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
-
-if (!publishableKey) {
-  throw new Error("Missing Publishable Key. Please set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in your .env");
-}
+const publishableKey =
+  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+  "pk_test_c3RlcmxpbmctbWluay0yMi5jbGVyay5hY2NvdW50cy5kZXYk";
 
 // Custom token cache using expo-secure-store to store JWT tokens securely
 const tokenCache = {
