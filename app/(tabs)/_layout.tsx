@@ -240,6 +240,17 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
+          name="activity"
+          options={{
+            title: "Activity",
+            tabBarLabel: "Activity",
+            headerShown: false,
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons name={focused ? "fitness" : "fitness-outline"} size={22} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
           name="analytics"
           options={{
             title: "Analytics",
