@@ -1,35 +1,35 @@
 import { useUser } from "@clerk/expo";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Accelerometer, Pedometer } from "expo-sensors";
-import {
-  classifyActivity,
-  smoothActivity,
-  type ActivityReading,
-  type DetectedActivity,
-  ACCEL_WINDOW_MS,
-  ACCEL_SAMPLE_INTERVAL_MS,
-} from "../../services/activityRecognition";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, setDoc, where } from "firebase/firestore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated,
   AppState,
   Dimensions,
-  Modal,
+  Image,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Defs, LinearGradient, Stop } from "react-native-svg";
 import HomeHeader from "../../components/HomeHeader";
+import WeeklyCalendar from "../../components/WeeklyCalendar";
 import Colors from "../../constants/Colors";
+import {
+  ACCEL_SAMPLE_INTERVAL_MS,
+  ACCEL_WINDOW_MS,
+  classifyActivity,
+  smoothActivity,
+  type ActivityReading,
+  type DetectedActivity,
+} from "../../services/activityRecognition";
 import { db } from "../../services/firebase";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -145,12 +145,29 @@ const formatDateStr = (date: Date): string => {
 };
 
 const formatDuration = (mins: number) => {
-  if (mins <= 0) return "0 min";
-  if (mins < 60) return `${mins} min`;
-  const hrs = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  if (remMins === 0) return `${hrs} hr`;
-  return `${hrs} hr ${remMins} min`;
+  if (mins <= 0) return "0 sec";
+  const totalSeconds = Math.round(mins * 60);
+  if (totalSeconds < 60) {
+    return `${totalSeconds} sec`;
+  }
+  const displayMins = Math.floor(totalSeconds / 60);
+  const remSec = totalSeconds % 60;
+  if (displayMins < 60) {
+    return remSec === 0 ? `${displayMins} min` : `${displayMins} min ${remSec} sec`;
+  }
+  const hrs = Math.floor(displayMins / 60);
+  const leftoverMins = displayMins % 60;
+  if (leftoverMins === 0) return `${hrs} hr`;
+  return `${hrs} hr ${leftoverMins} min`;
+};
+
+const formatDistance = (km: number) => {
+  if (km <= 0) return "0 m";
+  if (km < 1.0) {
+    const meters = Math.round(km * 1000);
+    return `${meters} m`;
+  }
+  return `${km.toFixed(1)} km`;
 };
 
 const formatPace = (mins: number, km: number) => {
@@ -185,13 +202,41 @@ export default function ActivityScreen() {
   const lastStepTimeRef = useRef<number>(0);
   const accelPrevMagRef = useRef<number>(1.0);
   const isRisingRef = useRef<boolean>(false);
+  const hasTroughRef = useRef<boolean>(false);
   const saveStepsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // User weight in kg for real calorie calculation (defaults to 70kg)
   const [userWeightKg, setUserWeightKg] = useState<number>(70);
 
-  // Today date ID in format YYYY-MM-DD
-  const todayDateId = useMemo(() => formatDateStr(new Date()), []);
+  // Today date ID in format YYYY-MM-DD (dynamic so it rolls over automatically at midnight)
+  const [todayDateId, setTodayDateId] = useState<string>(() => formatDateStr(new Date()));
+  // Selected date on the calendar strip (defaults to today)
+  const [selectedDateId, setSelectedDateId] = useState<string>(() => formatDateStr(new Date()));
+
+  // Periodically check if calendar day changed (midnight rollover)
+  useEffect(() => {
+    const checkDate = () => {
+      const nowId = formatDateStr(new Date());
+      if (nowId !== todayDateId) {
+        setTodayDateId(nowId);
+        setSelectedDateId((prev) => (prev === todayDateId ? nowId : prev));
+        setHardwareStepCount(0);
+        setLiveStepCount(0);
+        setRealtimeStepCount(0);
+        setTotalDailySteps(0);
+      }
+    };
+
+    const interval = setInterval(checkDate, 10_000);
+    const appSub = AppState.addEventListener("change", (state) => {
+      if (state === "active") checkDate();
+    });
+
+    return () => {
+      clearInterval(interval);
+      appSub.remove();
+    };
+  }, [todayDateId]);
 
   // Storage key for daily step count tied to today's date and user
   const stepStorageKey = useMemo(() => {
@@ -199,6 +244,16 @@ export default function ActivityScreen() {
       ? `daily_steps_${user.id}_${todayDateId}`
       : `daily_steps_guest_${todayDateId}`;
   }, [user?.id, todayDateId]);
+
+  // Storage key for daily calories burned from steps and activity
+  const caloriesStorageKey = useMemo(() => {
+    return user?.id
+      ? `daily_calories_burned_${user.id}_${todayDateId}`
+      : `daily_calories_burned_guest_${todayDateId}`;
+  }, [user?.id, todayDateId]);
+
+  // Daily step state initialized from storage
+  const [totalDailySteps, setTotalDailySteps] = useState<number>(0);
 
   // Load today's persisted step count from AsyncStorage on mount or date change
   useEffect(() => {
@@ -209,6 +264,7 @@ export default function ActivityScreen() {
         if (stored && isMounted) {
           const parsed = parseInt(stored, 10);
           if (!isNaN(parsed) && parsed > 0) {
+            setTotalDailySteps(parsed);
             setRealtimeStepCount(parsed);
           }
         }
@@ -222,22 +278,15 @@ export default function ActivityScreen() {
     };
   }, [stepStorageKey]);
 
-  // Debounced auto-save of steps to AsyncStorage whenever realtimeStepCount changes
-  useEffect(() => {
-    if (realtimeStepCount <= 0) return;
-    if (saveStepsTimeoutRef.current) {
-      clearTimeout(saveStepsTimeoutRef.current);
-    }
-    saveStepsTimeoutRef.current = setTimeout(() => {
-      AsyncStorage.setItem(stepStorageKey, String(realtimeStepCount)).catch(() => {});
-    }, 1000);
-
-    return () => {
-      if (saveStepsTimeoutRef.current) {
-        clearTimeout(saveStepsTimeoutRef.current);
-      }
-    };
-  }, [realtimeStepCount, stepStorageKey]);
+  // Persist total daily steps to AsyncStorage
+  const saveStepsToStorage = (steps: number) => {
+    if (steps <= 0) return;
+    setTotalDailySteps((prev) => {
+      const updated = Math.max(prev, steps);
+      AsyncStorage.setItem(stepStorageKey, String(updated)).catch(() => { });
+      return updated;
+    });
+  };
 
   // Load user profile weight from local storage
   useEffect(() => {
@@ -245,7 +294,7 @@ export default function ActivityScreen() {
       try {
         const stored = user?.id
           ? (await AsyncStorage.getItem(`onboarding_data_${user.id}`)) ||
-            (await AsyncStorage.getItem("onboarding_data"))
+          (await AsyncStorage.getItem("onboarding_data"))
           : await AsyncStorage.getItem("onboarding_data");
         if (stored) {
           const parsed = JSON.parse(stored);
@@ -276,8 +325,7 @@ export default function ActivityScreen() {
     return (userWeightKg * 0.57) / 1000;
   }, [userWeightKg]);
 
-  // Initialize hardware pedometer sensor and track real-time footsteps
-  // Initialize hardware pedometer sensor and track real-time footsteps (including background / screen off)
+  // Initialize hardware pedometer sensor and track steps (including when app is minimized / screen off)
   useEffect(() => {
     let isMounted = true;
     let subscription: { remove: () => void } | null = null;
@@ -289,70 +337,70 @@ export default function ActivityScreen() {
         if (!isMounted) return;
         setIsPedometerAvailable(available);
 
-        if (available) {
-          const perm = await Pedometer.requestPermissionsAsync();
-          const isGranted = perm.granted || perm.status === "granted";
-          if (!isGranted) return;
+        if (!available) return;
 
-          // 1. Fetch today's historical step count on iOS (CoreMotion tracks steps automatically while locked/screen off)
-          if (Platform.OS === "ios") {
-            const startOfToday = new Date();
-            startOfToday.setHours(0, 0, 0, 0);
-            const now = new Date();
+        const perm = await Pedometer.requestPermissionsAsync();
+        const isGranted = perm.granted || perm.status === "granted";
+        if (!isGranted) return;
 
-            try {
-              const pastStepsResult = await Pedometer.getStepCountAsync(startOfToday, now);
-              if (isMounted && pastStepsResult && typeof pastStepsResult.steps === "number") {
-                setHardwareStepCount(pastStepsResult.steps);
-              }
-            } catch (err) {
-              console.warn("Pedometer past steps error:", err);
-            }
+        // 1. On iOS: getStepCountAsync queries CoreMotion for exact steps since midnight (works while locked/minimized!)
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const now = new Date();
+
+        try {
+          const pastStepsResult = await Pedometer.getStepCountAsync(startOfToday, now);
+          if (isMounted && pastStepsResult && typeof pastStepsResult.steps === "number") {
+            setHardwareStepCount(pastStepsResult.steps);
+            saveStepsToStorage(pastStepsResult.steps);
           }
-
-          // 2. Load stored hardware base for Android if previously recorded today
-          if (Platform.OS === "android" && initialHardwareBaseRef.current === null) {
-            try {
-              const savedBase = await AsyncStorage.getItem(hardwareBaseStorageKey);
-              if (savedBase) {
-                const parsedBase = parseInt(savedBase, 10);
-                if (!isNaN(parsedBase) && parsedBase > 0) {
-                  initialHardwareBaseRef.current = parsedBase;
-                }
-              }
-            } catch {}
-          }
-
-          // 3. Watch live step counts while user moves (hardware pedometer chip continues counting while screen is locked)
-          try {
-            if (subscription) {
-              subscription.remove();
-              subscription = null;
-            }
-            subscription = Pedometer.watchStepCount((result) => {
-              if (!isMounted || !result || typeof result.steps !== "number") return;
-
-              if (Platform.OS === "android") {
-                // On Android, result.steps is the cumulative steps recorded by hardware sensor since boot
-                if (initialHardwareBaseRef.current === null) {
-                  initialHardwareBaseRef.current = result.steps;
-                  AsyncStorage.setItem(hardwareBaseStorageKey, String(result.steps)).catch(() => {});
-                } else if (result.steps < initialHardwareBaseRef.current) {
-                  // Device was rebooted today, reset baseline to current counter
-                  initialHardwareBaseRef.current = result.steps;
-                  AsyncStorage.setItem(hardwareBaseStorageKey, String(result.steps)).catch(() => {});
-                }
-
-                const stepsSinceSub = Math.max(0, result.steps - initialHardwareBaseRef.current);
-                setLiveStepCount(stepsSinceSub);
-              } else {
-                setLiveStepCount(result.steps);
-              }
-            });
-          } catch (err) {
-            console.warn("Pedometer watchStepCount error:", err);
-          }
+        } catch {
+          // Fallback or not supported on some Android versions
         }
+
+        // 2. Load Android hardware base count
+        if (Platform.OS === "android") {
+          try {
+            const savedBase = await AsyncStorage.getItem(hardwareBaseStorageKey);
+            if (savedBase) {
+              const parsedBase = parseInt(savedBase, 10);
+              if (!isNaN(parsedBase) && parsedBase > 0) {
+                initialHardwareBaseRef.current = parsedBase;
+              }
+            }
+          } catch { }
+        }
+
+        // 3. Start live hardware pedometer subscription
+        if (subscription) {
+          subscription.remove();
+          subscription = null;
+        }
+
+        subscription = Pedometer.watchStepCount((result) => {
+          if (!isMounted || !result || typeof result.steps !== "number") return;
+
+          const currentTs = Date.now();
+          stepTimestampsRef.current.push(currentTs);
+
+          if (Platform.OS === "android") {
+            // Android result.steps is steps since device boot
+            if (initialHardwareBaseRef.current === null) {
+              initialHardwareBaseRef.current = result.steps;
+              AsyncStorage.setItem(hardwareBaseStorageKey, String(result.steps)).catch(() => { });
+            } else if (result.steps < initialHardwareBaseRef.current) {
+              initialHardwareBaseRef.current = result.steps;
+              AsyncStorage.setItem(hardwareBaseStorageKey, String(result.steps)).catch(() => { });
+            }
+
+            const stepsSinceSub = Math.max(0, result.steps - initialHardwareBaseRef.current);
+            setLiveStepCount(stepsSinceSub);
+            saveStepsToStorage(stepsSinceSub);
+          } else {
+            // iOS watchStepCount returns steps since subscription started
+            setLiveStepCount(result.steps);
+          }
+        });
       } catch (err) {
         console.warn("Pedometer initialization notice:", err);
       }
@@ -360,7 +408,7 @@ export default function ActivityScreen() {
 
     syncPedometer();
 
-    // Re-sync steps when screen turns back on / user returns to foreground after walking with screen off
+    // When the app is minimized and reopened, immediately re-query the hardware pedometer
     const appStateSub = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         syncPedometer();
@@ -400,18 +448,22 @@ export default function ActivityScreen() {
     setDetectionConfidence(conf);
   };
 
-  // Accelerometer subscription: real-time per-step detection + classification loop
+  // Accelerometer subscription: real-time activity classification and fallback step detection
   useEffect(() => {
     let accelSub: { remove: () => void } | null = null;
     let classifyInterval: ReturnType<typeof setInterval> | null = null;
     let isMounted = true;
+
+    // Rhythmic step validation buffer: stores intervals between recent detected peaks
+    const recentIntervalsRef: number[] = [];
+    let consecutiveRhythmicSteps = 0;
 
     async function startRecognition() {
       try {
         const avail = await Accelerometer.isAvailableAsync();
         if (!avail || !isMounted) return;
 
-        // Sample interval: 50ms for responsive step detection
+        // Sample interval: 50ms (20Hz)
         Accelerometer.setUpdateInterval(ACCEL_SAMPLE_INTERVAL_MS);
 
         accelSub = Accelerometer.addListener(({ x, y, z }) => {
@@ -424,23 +476,58 @@ export default function ActivityScreen() {
           const cutoff = now - ACCEL_WINDOW_MS;
           accelWindowRef.current = accelWindowRef.current.filter((r) => r.timestamp >= cutoff);
 
-          // REAL-TIME STEP PEAK DETECTOR (Increments count on every single footstep)
+          // Calculate acceleration magnitude
           const magnitude = Math.sqrt(x * x + y * y + z * z);
           const prevMag = accelPrevMagRef.current;
           accelPrevMagRef.current = magnitude;
 
-          // Detect inflection point (peak of vertical step wave)
-          const STEP_PEAK_THRESHOLD = 1.18; // G-force peak threshold for a footstep
-          const MIN_STEP_INTERVAL_MS = 260; // Max ~230 steps/min (prevents double counts)
+          // STEP DETECTION LOGIC:
+          // A real footstep produces an acceleration wave with a dynamic peak above baseline gravity (~1.0G).
+          // Lifting or moving the phone slowly produces a broad tilt change (<1.06G).
+          // Violent shaking produces extreme peaks (>2.20G) or hyper-fast intervals (<250ms).
+          const STEP_PEAK_MIN = 1.20;   // Footstep peak threshold
+          const STEP_PEAK_MAX = 2.20;   // Rejects violent phone shaking
+          const MIN_INTERVAL_MS = 260;  // Max ~230 steps/min
+          const MAX_INTERVAL_MS = 1000; // Min ~60 steps/min (floor for casual walking)
 
           if (magnitude > prevMag) {
             isRisingRef.current = true;
-          } else if (isRisingRef.current && prevMag >= STEP_PEAK_THRESHOLD) {
+          } else if (
+            isRisingRef.current &&
+            prevMag >= STEP_PEAK_MIN &&
+            prevMag <= STEP_PEAK_MAX
+          ) {
             isRisingRef.current = false;
-            if (now - lastStepTimeRef.current >= MIN_STEP_INTERVAL_MS) {
+            const deltaMs = now - lastStepTimeRef.current;
+
+            if (deltaMs >= MIN_INTERVAL_MS) {
+              if (deltaMs <= MAX_INTERVAL_MS) {
+                // Footstep cadence matches walking rhythm
+                consecutiveRhythmicSteps += 1;
+
+                if (consecutiveRhythmicSteps === 2) {
+                  // User has taken 2 steps in rhythm - credit both strides!
+                  stepTimestampsRef.current.push(lastStepTimeRef.current, now);
+                  setRealtimeStepCount((prev) => {
+                    const next = prev + 2;
+                    saveStepsToStorage(next);
+                    return next;
+                  });
+                } else if (consecutiveRhythmicSteps > 2) {
+                  // Ongoing walking session - increment every stride in real-time
+                  stepTimestampsRef.current.push(now);
+                  setRealtimeStepCount((prev) => {
+                    const next = prev + 1;
+                    saveStepsToStorage(next);
+                    return next;
+                  });
+                }
+              } else {
+                // Gap too long (>1000ms) - user paused or just picked up phone
+                consecutiveRhythmicSteps = 1;
+              }
+
               lastStepTimeRef.current = now;
-              stepTimestampsRef.current.push(now);
-              setRealtimeStepCount((prev) => prev + 1);
             }
           }
         });
@@ -476,26 +563,29 @@ export default function ActivityScreen() {
       if (accelSub) accelSub.remove();
       if (classifyInterval) clearInterval(classifyInterval);
     };
-  }, []);
+  }, [isPedometerAvailable]);
 
   // User workout logs from Firestore
   const [allWorkouts, setAllWorkouts] = useState<WorkoutLog[]>([]);
 
 
-  // Calculate reference date strings
+  // Calculate reference date strings (updates dynamically with todayDateId)
   const weekStartDateId = useMemo(() => {
-    const now = new Date();
+    const [y, m, d] = todayDateId.split("-").map(Number);
+    const now = y && m && d ? new Date(y, m - 1, d) : new Date();
     const dayOfWeek = now.getDay();
     const distanceToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     const monday = new Date(now);
     monday.setDate(now.getDate() + distanceToMonday);
     return formatDateStr(monday);
-  }, []);
+  }, [todayDateId]);
 
   const monthStartDateId = useMemo(() => {
+    const [y, m] = todayDateId.split("-").map(Number);
+    if (y && m) return `${y}-${String(m).padStart(2, "0")}-01`;
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  }, []);
+  }, [todayDateId]);
 
   // Formatted date string for header: e.g. "Sun, 27 Sep"
   const formattedToday = useMemo(() => {
@@ -506,6 +596,102 @@ export default function ActivityScreen() {
       month: "short",
     });
   }, []);
+
+  // Formatted date string for selected date
+  const formattedSelectedDate = useMemo(() => {
+    if (selectedDateId === todayDateId) return formattedToday;
+    const [y, m, d] = selectedDateId.split("-").map(Number);
+    if (!y || !m || !d) return formattedToday;
+    const dateObj = new Date(y, m - 1, d);
+    return dateObj.toLocaleDateString("en-US", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+  }, [selectedDateId, todayDateId, formattedToday]);
+
+  const isSelectedToday = selectedDateId === todayDateId;
+
+  // Stored historical steps & calories for selectedDateId (when viewing previous days)
+  const [persistedSelectedDaySteps, setPersistedSelectedDaySteps] = useState<number>(0);
+  const [persistedSelectedDayCalories, setPersistedSelectedDayCalories] = useState<number>(0);
+  const [userFirestoreDailySteps, setUserFirestoreDailySteps] = useState<Record<string, number>>({});
+
+  // Real-time Firestore subscription to current user's document for historical dailySteps map
+  useEffect(() => {
+    if (!user?.id) return;
+    const userDocRef = doc(db, "users", user.id);
+    const unsubscribe = onSnapshot(
+      userDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data?.dailySteps && typeof data.dailySteps === "object") {
+            setUserFirestoreDailySteps(data.dailySteps);
+          }
+        }
+      },
+      (err) => {
+        console.warn("User dailySteps subscription warning:", err);
+      }
+    );
+    return () => unsubscribe();
+  }, [user?.id]);
+
+  // Load persisted steps & calories from AsyncStorage whenever selectedDateId changes
+  useEffect(() => {
+    let isMounted = true;
+    async function loadSelectedDayStoredData() {
+      if (isSelectedToday) {
+        if (isMounted) {
+          setPersistedSelectedDaySteps(0);
+          setPersistedSelectedDayCalories(0);
+        }
+        return;
+      }
+
+      try {
+        const stepKey = user?.id
+          ? `daily_steps_${user.id}_${selectedDateId}`
+          : `daily_steps_guest_${selectedDateId}`;
+        const calKey = user?.id
+          ? `daily_calories_burned_${user.id}_${selectedDateId}`
+          : `daily_calories_burned_guest_${selectedDateId}`;
+
+        const [savedSteps, savedCals] = await Promise.all([
+          AsyncStorage.getItem(stepKey),
+          AsyncStorage.getItem(calKey),
+        ]);
+
+        if (isMounted) {
+          if (savedSteps) {
+            const parsed = parseInt(savedSteps, 10);
+            if (!isNaN(parsed) && parsed >= 0) {
+              setPersistedSelectedDaySteps(parsed);
+            }
+          } else {
+            setPersistedSelectedDaySteps(0);
+          }
+
+          if (savedCals) {
+            const parsedC = parseInt(savedCals, 10);
+            if (!isNaN(parsedC) && parsedC >= 0) {
+              setPersistedSelectedDayCalories(parsedC);
+            }
+          } else {
+            setPersistedSelectedDayCalories(0);
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to load selected day stored data:", e);
+      }
+    }
+
+    loadSelectedDayStoredData();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDateId, isSelectedToday, user?.id]);
 
   // Real-time Firestore subscription to user's workout logs
   useEffect(() => {
@@ -536,6 +722,11 @@ export default function ActivityScreen() {
 
     return () => unsubscribe();
   }, [user, todayDateId]);
+
+  // Filter logs for selected day
+  const selectedDayWorkouts = useMemo(() => {
+    return allWorkouts.filter((l) => l.date === selectedDateId);
+  }, [allWorkouts, selectedDateId]);
 
   // Filter logs for Today
   const todayWorkouts = useMemo(() => {
@@ -613,7 +804,7 @@ export default function ActivityScreen() {
   // Real footsteps from pedometer sensor / real-time detector + any logged walking/running steps
   const summarySteps = useMemo(() => {
     const liveDelta = Math.max(liveStepCount, realtimeStepCount);
-    const sensorSteps = hardwareStepCount + liveDelta;
+    const sensorSteps = Math.max(hardwareStepCount + liveDelta, totalDailySteps);
     let loggedSteps = 0;
     todayWorkouts.forEach((l) => {
       if (l.steps) {
@@ -621,7 +812,20 @@ export default function ActivityScreen() {
       }
     });
     return Math.max(sensorSteps, loggedSteps);
-  }, [hardwareStepCount, liveStepCount, realtimeStepCount, todayWorkouts]);
+  }, [hardwareStepCount, liveStepCount, realtimeStepCount, totalDailySteps, todayWorkouts]);
+
+  // Steps to display in the overview card (live sensor if today, or historical recorded steps if previous date)
+  const displayedSteps = useMemo(() => {
+    if (isSelectedToday) return summarySteps;
+    let loggedSteps = 0;
+    selectedDayWorkouts.forEach((l) => {
+      if (l.steps) loggedSteps += Number(l.steps);
+    });
+
+    const firestoreSteps = userFirestoreDailySteps[selectedDateId] || 0;
+    const historicalSteps = Math.max(persistedSelectedDaySteps, firestoreSteps);
+    return Math.max(loggedSteps, historicalSteps);
+  }, [isSelectedToday, summarySteps, selectedDayWorkouts, persistedSelectedDaySteps, userFirestoreDailySteps, selectedDateId]);
 
   // Total calories burned today across ALL workouts + pedometer steps
   const summaryCalories = useMemo(() => {
@@ -630,31 +834,190 @@ export default function ActivityScreen() {
     return stepsCals + loggedCals;
   }, [summarySteps, calPerStep, todayWorkouts]);
 
-  // Total active time today across ALL workouts + footsteps (~110 steps/min)
-  const summaryActiveTime = useMemo(() => {
-    const stepsTime = summarySteps > 0 ? Math.round(summarySteps / 110) : 0;
-    const loggedTime = todayWorkouts.reduce((acc, curr) => acc + (Number(curr.duration) || 0), 0);
-    return Math.max(stepsTime, loggedTime);
-  }, [summarySteps, todayWorkouts]);
+  // Calories burned for the selected date (immutable historical data for previous days)
+  const displayedCalories = useMemo(() => {
+    if (isSelectedToday) return summaryCalories;
+    const stepsCals = displayedSteps > 0 ? Math.round(displayedSteps * calPerStep) : 0;
+    const loggedCals = selectedDayWorkouts.reduce((acc, curr) => acc + (Number(curr.calories) || 0), 0);
+    const computedCals = stepsCals + loggedCals;
+    return Math.max(computedCals, persistedSelectedDayCalories);
+  }, [isSelectedToday, summaryCalories, displayedSteps, calPerStep, selectedDayWorkouts, persistedSelectedDayCalories]);
 
-  // Total distance across logged workouts + footsteps (~0.00075km per step)
-  const summaryDistance = useMemo(() => {
-    let loggedDist = 0;
-    todayWorkouts.forEach((l) => {
+  // Automatically save total calories burned to AsyncStorage so Home Tab's active burned ring is synced in real-time
+  useEffect(() => {
+    if (summaryCalories > 0 && caloriesStorageKey) {
+      AsyncStorage.setItem(caloriesStorageKey, String(summaryCalories)).catch(() => {});
+    }
+  }, [summaryCalories, caloriesStorageKey]);
+
+  // Sync current user's steps to Firestore daily stats so they appear in real-time on all leaderboards
+  useEffect(() => {
+    if (!user?.id || summarySteps <= 0) return;
+
+    // Detect social providers linked with user (Google/Gmail, Facebook, Apple, etc.)
+    const verifiedAccounts = user.verifiedExternalAccounts || [];
+    const providerList: string[] = [];
+    verifiedAccounts.forEach((acc: any) => {
+      const p = (acc.provider || acc.verification?.strategy || "").toLowerCase();
+      if (p.includes("google") || p.includes("gmail")) providerList.push("gmail");
+      else if (p.includes("facebook")) providerList.push("facebook");
+      else if (p.includes("instagram")) providerList.push("instagram");
+      else if (p.includes("apple")) providerList.push("apple");
+      else if (p) providerList.push(p);
+    });
+
+    // Also check email domain for Gmail connection
+    const email = user.primaryEmailAddress?.emailAddress || "";
+    if (email.endsWith("@gmail.com") && !providerList.includes("gmail")) {
+      providerList.push("gmail");
+    }
+
+    const userDocRef = doc(db, "users", user.id);
+    setDoc(
+      userDocRef,
+      {
+        uid: user.id,
+        displayName: user.fullName || user.firstName || "Athlete",
+        photoURL: user.imageUrl || "",
+        email,
+        connectedApps: providerList,
+        dailySteps: {
+          [todayDateId]: summarySteps,
+        },
+        currentDaySteps: summarySteps,
+        lastStepsDate: todayDateId,
+      },
+      { merge: true }
+    ).catch((err) => {
+      console.warn("Leaderboard step sync error:", err);
+    });
+  }, [summarySteps, user, todayDateId]);
+
+  // Leaderboard state
+  interface LeaderboardUser {
+    id: string;
+    name: string;
+    avatar?: string;
+    steps: number;
+    connectedVia: string[];
+    isCurrentUser: boolean;
+  }
+
+  const [leaderboardUsers, setLeaderboardUsers] = useState<LeaderboardUser[]>([]);
+  const [leaderboardFilter, setLeaderboardFilter] = useState<"all" | "connected">("all");
+
+  // Query real users from Firestore in real-time for the leaderboard according to the selected date
+  useEffect(() => {
+    const usersQuery = query(collection(db, "users"));
+    const unsubscribe = onSnapshot(
+      usersQuery,
+      (snapshot) => {
+        const fetched: LeaderboardUser[] = [];
+
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const docUserId = data.uid || docSnap.id;
+          const isMe = docUserId === user?.id;
+
+          // Steps for the selected date (live or persisted for current user, dailySteps[selectedDateId] for others)
+          let steps = 0;
+          if (isMe) {
+            steps = displayedSteps;
+          } else if (data.dailySteps && typeof data.dailySteps[selectedDateId] === "number") {
+            steps = data.dailySteps[selectedDateId];
+          } else if (data.lastStepsDate === selectedDateId && typeof data.currentDaySteps === "number") {
+            steps = data.currentDaySteps;
+          }
+
+          // Social connections (Facebook, Instagram, Gmail, etc.)
+          let connectedVia: string[] = Array.isArray(data.connectedApps) ? data.connectedApps : [];
+          if (connectedVia.length === 0 && data.email && typeof data.email === "string" && data.email.endsWith("@gmail.com")) {
+            connectedVia = ["gmail"];
+          }
+
+          fetched.push({
+            id: docUserId,
+            name: data.displayName || (isMe ? "You" : "Community Member"),
+            avatar: data.photoURL || undefined,
+            steps: steps || 0,
+            connectedVia,
+            isCurrentUser: isMe,
+          });
+        });
+
+        // Ensure current user is present even if offline or new
+        const hasMe = fetched.some((u) => u.isCurrentUser);
+        if (!hasMe && user?.id) {
+          fetched.push({
+            id: user.id,
+            name: user.fullName || "You",
+            avatar: user.imageUrl || undefined,
+            steps: displayedSteps,
+            connectedVia: ["gmail"],
+            isCurrentUser: true,
+          });
+        }
+
+        // Sort descending by step count (highest steps on top)
+        fetched.sort((a, b) => b.steps - a.steps);
+
+        setLeaderboardUsers(fetched);
+      },
+      (err) => {
+        console.warn("Leaderboard Firestore error:", err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user?.id, selectedDateId, displayedSteps]);
+
+  // Total active time for selected date across workouts + footsteps (~110 steps/min)
+  // Formats to seconds (< 1 min) or minutes (>= 1 min)
+  const formattedActiveTime = useMemo(() => {
+    const activeWorkouts = isSelectedToday ? todayWorkouts : selectedDayWorkouts;
+    const stepsSeconds = displayedSteps > 0 ? Math.round((displayedSteps / 110) * 60) : 0;
+    const loggedSeconds = activeWorkouts.reduce(
+      (acc, curr) => acc + (Number(curr.duration) || 0) * 60,
+      0
+    );
+    const totalSeconds = Math.max(stepsSeconds, loggedSeconds);
+
+    if (totalSeconds < 60) {
+      return `${totalSeconds} sec`;
+    }
+    const mins = Math.floor(totalSeconds / 60);
+    const remSec = totalSeconds % 60;
+    if (remSec === 0) {
+      return `${mins} min`;
+    }
+    return `${mins} min ${remSec} sec`;
+  }, [isSelectedToday, todayWorkouts, selectedDayWorkouts, displayedSteps]);
+
+  // Total distance across workouts + footsteps (~0.00075km = 0.75m per step)
+  // Formats to meters (< 1 km) or km (>= 1 km)
+  const formattedDistance = useMemo(() => {
+    const activeWorkouts = isSelectedToday ? todayWorkouts : selectedDayWorkouts;
+    let loggedDistKm = 0;
+    activeWorkouts.forEach((l) => {
       if (l.distance) {
-        loggedDist += Number(l.distance);
+        loggedDistKm += Number(l.distance);
       }
     });
-    const stepDist = summarySteps > 0 ? summarySteps * 0.00075 : 0;
-    const finalDist = loggedDist + stepDist;
-    return finalDist > 0 ? finalDist.toFixed(1) : "0.0";
-  }, [summarySteps, todayWorkouts]);
+    const stepDistKm = displayedSteps > 0 ? displayedSteps * 0.00075 : 0;
+    const totalKm = loggedDistKm + stepDistKm;
+
+    if (totalKm < 1.0) {
+      const meters = Math.round(totalKm * 1000);
+      return `${meters} m`;
+    }
+    return `${totalKm.toFixed(1)} km`;
+  }, [isSelectedToday, todayWorkouts, selectedDayWorkouts, displayedSteps]);
 
   // Circular gauge calculations
   const ringRadius = 72;
   const strokeWidth = 11;
   const circumference = 2 * Math.PI * ringRadius;
-  const progressRatio = summarySteps > 0 ? Math.min(summarySteps / summaryGoal, 1) : 0;
+  const progressRatio = displayedSteps > 0 ? Math.min(displayedSteps / summaryGoal, 1) : 0;
   const strokeDashoffset = circumference - circumference * progressRatio;
 
   // Selected activity config & calculations
@@ -678,15 +1041,63 @@ export default function ActivityScreen() {
     let steps = 0;
     if (selectedActivityId === "walking") {
       const liveDelta = Math.max(liveStepCount, realtimeStepCount);
-      const sensorSteps = hardwareStepCount + liveDelta;
+      const todaySensor = Math.max(hardwareStepCount + liveDelta, totalDailySteps);
       let loggedSteps = 0;
       matchedLogs.forEach((l) => {
         if (l.steps) loggedSteps += Number(l.steps);
       });
+
       if (period === "today") {
-        steps = Math.max(sensorSteps, loggedSteps);
+        steps = Math.max(todaySensor, loggedSteps);
+      } else if (period === "week") {
+        // Sum actual steps for each day of current week (Monday to today)
+        let weekSum = 0;
+        const [y, m, d] = todayDateId.split("-").map(Number);
+        const todayDate = y && m && d ? new Date(y, m - 1, d) : new Date();
+        const [sy, sm, sd] = weekStartDateId.split("-").map(Number);
+        const cursor = sy && sm && sd ? new Date(sy, sm - 1, sd) : new Date(todayDate);
+
+        while (cursor <= todayDate) {
+          const cStr = formatDateStr(cursor);
+          if (cStr === todayDateId) {
+            weekSum += Math.max(todaySensor, loggedSteps);
+          } else {
+            const histSteps = userFirestoreDailySteps[cStr] || 0;
+            // Also check logged workouts for that day
+            const dayWorkouts = periodWorkouts.filter((l) => l.date === cStr && matchesActivity(l, "walking"));
+            let dayLoggedSteps = 0;
+            dayWorkouts.forEach((w) => {
+              if (w.steps) dayLoggedSteps += Number(w.steps);
+            });
+            weekSum += Math.max(histSteps, dayLoggedSteps);
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        steps = weekSum;
       } else {
-        steps = loggedSteps + sensorSteps;
+        // Month view: sum actual steps from 1st of month to today
+        let monthSum = 0;
+        const [y, m, d] = todayDateId.split("-").map(Number);
+        const todayDate = y && m && d ? new Date(y, m - 1, d) : new Date();
+        const [sy, sm, sd] = monthStartDateId.split("-").map(Number);
+        const cursor = sy && sm && sd ? new Date(sy, sm - 1, sd) : new Date(todayDate);
+
+        while (cursor <= todayDate) {
+          const cStr = formatDateStr(cursor);
+          if (cStr === todayDateId) {
+            monthSum += Math.max(todaySensor, loggedSteps);
+          } else {
+            const histSteps = userFirestoreDailySteps[cStr] || 0;
+            const dayWorkouts = periodWorkouts.filter((l) => l.date === cStr && matchesActivity(l, "walking"));
+            let dayLoggedSteps = 0;
+            dayWorkouts.forEach((w) => {
+              if (w.steps) dayLoggedSteps += Number(w.steps);
+            });
+            monthSum += Math.max(histSteps, dayLoggedSteps);
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        steps = monthSum;
       }
 
       if (steps > 0) {
@@ -694,8 +1105,9 @@ export default function ActivityScreen() {
         if (stepDist > distance) distance = stepDist;
         const stepCal = Math.round(steps * calPerStep);
         if (stepCal > calories) calories = stepCal;
-        const stepDuration = Math.round(steps / 110);
-        if (stepDuration > duration) duration = stepDuration;
+        // Continuous active time: ~110 steps per minute (~0.545 seconds per step)
+        const stepDurationMins = (steps * 60) / 110 / 60; // steps / 110 in minutes (with fractional seconds precision)
+        if (stepDurationMins > duration) duration = stepDurationMins;
       }
     } else {
       matchedLogs.forEach((l) => {
@@ -721,14 +1133,14 @@ export default function ActivityScreen() {
     const stepGoal = period === "today" ? 10000 : period === "week" ? 70000 : 300000;
 
     // Primary values
-    let primaryValue = "0 min";
+    let primaryValue = "0 sec";
     let primarySubtitle: string | undefined;
 
     if (isWalking) {
       primaryValue = steps.toLocaleString();
       primarySubtitle = `/ ${stepGoal.toLocaleString()}`;
     } else if (isRunning || isCycling) {
-      primaryValue = distance > 0 ? `${distance.toFixed(1)} km` : "0.0 km";
+      primaryValue = formatDistance(distance);
       primarySubtitle = `(${formatDuration(duration)})`;
     } else {
       primaryValue = formatDuration(duration);
@@ -741,7 +1153,7 @@ export default function ActivityScreen() {
 
     if (isWalking) {
       stat1 = { label: "Calories Burned", value: `${calories} cal` };
-      stat2 = { label: "Distance", value: `${distance.toFixed(1)} km` };
+      stat2 = { label: "Distance", value: formatDistance(distance) };
       stat3 = { label: "Time", value: formatDuration(duration) };
     } else if (isRunning) {
       stat1 = { label: "Avg. Pace", value: formatPace(duration, distance) + " /km" };
@@ -770,7 +1182,7 @@ export default function ActivityScreen() {
       stat2 = { label: "Avg. HR", value: duration > 0 ? "128 bpm" : "--" };
       stat3 = { label: "Intensity", value: duration > 0 ? "High" : "--" };
     } else if (isFootball) {
-      stat1 = { label: "Distance", value: `${distance.toFixed(1)} km` };
+      stat1 = { label: "Distance", value: formatDistance(distance) };
       stat2 = { label: "Avg. HR", value: duration > 0 ? "145 bpm" : "--" };
       stat3 = { label: "Intensity", value: duration > 0 ? "Match" : "--" };
     } else {
@@ -806,9 +1218,9 @@ export default function ActivityScreen() {
       else tip = `Awesome effort! You burned ${calories} calories in this period.`;
     } else {
       if (isWalking) {
-        tip = "No walking recorded today. Take a walk with your phone to start tracking steps, calories, and time automatically!";
+        tip = `No walking recorded for ${period === "today" ? "today" : period === "week" ? "this week" : "this month"}. Take a walk with your phone to start tracking steps, calories, and time automatically!`;
       } else {
-        tip = `No ${currentConfig?.name.toLowerCase() || "activity"} logged for this period. Tap below to log your session!`;
+        tip = `No ${currentConfig?.name.toLowerCase() || "activity"} detected for this period. Move with your device to track calories and active time automatically!`;
       }
     }
 
@@ -826,82 +1238,171 @@ export default function ActivityScreen() {
       breakdown2,
       tip,
     };
-  }, [selectedActivityId, periodWorkouts, period, currentConfig, hardwareStepCount, liveStepCount, calPerStep]);
+  }, [selectedActivityId, periodWorkouts, period, currentConfig, hardwareStepCount, liveStepCount, realtimeStepCount, totalDailySteps, calPerStep, todayDateId, weekStartDateId, monthStartDateId, userFirestoreDailySteps]);
 
-  // Hourly steps for walking detail chart (from actual today's walking logs and sensors)
-  const hourlySteps = useMemo(() => {
-    const buckets = [
-      { time: "6am", steps: 0 },
-      { time: "9am", steps: 0 },
-      { time: "12pm", steps: 0 },
-      { time: "3pm", steps: 0 },
-      { time: "6pm", steps: 0 },
-      { time: "9pm", steps: 0 },
-    ];
+  // Steps chart for walking detail view (hourly for today, daily for week, weekly for month)
+  const walkingChartData = useMemo(() => {
+    const liveDelta = Math.max(liveStepCount, realtimeStepCount);
+    const todaySensor = Math.max(hardwareStepCount + liveDelta, totalDailySteps);
 
-    todayWalkingLogs.forEach((l) => {
-      const logSteps = l.steps ? Number(l.steps) : 0;
-      if (logSteps <= 0) return;
+    if (period === "today") {
+      const buckets = [
+        { time: "6am", steps: 0 },
+        { time: "9am", steps: 0 },
+        { time: "12pm", steps: 0 },
+        { time: "3pm", steps: 0 },
+        { time: "6pm", steps: 0 },
+        { time: "9pm", steps: 0 },
+      ];
 
-      let hour = 12;
-      if (l.createdAt) {
-        try {
-          if (l.createdAt.toDate) hour = l.createdAt.toDate().getHours();
-          else if (l.createdAt.seconds) hour = new Date(l.createdAt.seconds * 1000).getHours();
-        } catch {
-          hour = 12;
+      todayWalkingLogs.forEach((l) => {
+        const logSteps = l.steps ? Number(l.steps) : 0;
+        if (logSteps <= 0) return;
+
+        let hour = 12;
+        if (l.createdAt) {
+          try {
+            if (l.createdAt.toDate) hour = l.createdAt.toDate().getHours();
+            else if (l.createdAt.seconds) hour = new Date(l.createdAt.seconds * 1000).getHours();
+          } catch {
+            hour = 12;
+          }
         }
+
+        if (hour < 8) buckets[0].steps += logSteps;
+        else if (hour < 11) buckets[1].steps += logSteps;
+        else if (hour < 14) buckets[2].steps += logSteps;
+        else if (hour < 17) buckets[3].steps += logSteps;
+        else if (hour < 20) buckets[4].steps += logSteps;
+        else buckets[5].steps += logSteps;
+      });
+
+      const currentHour = new Date().getHours();
+      if (todaySensor > 0) {
+        let bIdx = 0;
+        if (currentHour < 8) bIdx = 0;
+        else if (currentHour < 11) bIdx = 1;
+        else if (currentHour < 14) bIdx = 2;
+        else if (currentHour < 17) bIdx = 3;
+        else if (currentHour < 20) bIdx = 4;
+        else bIdx = 5;
+
+        buckets[bIdx].steps = Math.max(buckets[bIdx].steps, todaySensor);
       }
 
-      if (hour < 8) buckets[0].steps += logSteps;
-      else if (hour < 11) buckets[1].steps += logSteps;
-      else if (hour < 14) buckets[2].steps += logSteps;
-      else if (hour < 17) buckets[3].steps += logSteps;
-      else if (hour < 20) buckets[4].steps += logSteps;
-      else buckets[5].steps += logSteps;
-    });
+      const maxSteps = Math.max(...buckets.map((b) => b.steps), 1000);
 
-    const totalPedometer = hardwareStepCount + Math.max(liveStepCount, realtimeStepCount);
-    const currentHour = new Date().getHours();
-    if (totalPedometer > 0) {
-      let bIdx = 0;
-      if (currentHour < 8) bIdx = 0;
-      else if (currentHour < 11) bIdx = 1;
-      else if (currentHour < 14) bIdx = 2;
-      else if (currentHour < 17) bIdx = 3;
-      else if (currentHour < 20) bIdx = 4;
-      else bIdx = 5;
-
-      buckets[bIdx].steps = Math.max(buckets[bIdx].steps, totalPedometer);
+      return buckets.map((b) => ({
+        time: b.time,
+        steps: b.steps,
+        pct: b.steps > 0 ? Math.min(100, Math.max(8, (b.steps / maxSteps) * 100)) : 0,
+      }));
     }
 
-    const maxSteps = Math.max(...buckets.map((b) => b.steps), 1000);
+    if (period === "week") {
+      // 7 days of the week: Mon to Sun
+      const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+      const [sy, sm, sd] = weekStartDateId.split("-").map(Number);
+      const startMonday = sy && sm && sd ? new Date(sy, sm - 1, sd) : new Date();
 
-    return buckets.map((b) => ({
+      const weekBuckets = dayLabels.map((lbl, idx) => {
+        const d = new Date(startMonday);
+        d.setDate(startMonday.getDate() + idx);
+        const dStr = formatDateStr(d);
+        let daySteps = 0;
+        if (dStr === todayDateId) {
+          let loggedToday = 0;
+          todayWalkingLogs.forEach((l) => {
+            if (l.steps) loggedToday += Number(l.steps);
+          });
+          daySteps = Math.max(todaySensor, loggedToday);
+        } else if (dStr <= todayDateId) {
+          const histSteps = userFirestoreDailySteps[dStr] || 0;
+          const dayWorkouts = periodWorkouts.filter((l) => l.date === dStr && matchesActivity(l, "walking"));
+          let logged = 0;
+          dayWorkouts.forEach((w) => {
+            if (w.steps) logged += Number(w.steps);
+          });
+          daySteps = Math.max(histSteps, logged);
+        }
+        return {
+          time: lbl,
+          steps: daySteps,
+        };
+      });
+
+      const maxSteps = Math.max(...weekBuckets.map((b) => b.steps), 1000);
+      return weekBuckets.map((b) => ({
+        time: b.time,
+        steps: b.steps,
+        pct: b.steps > 0 ? Math.min(100, Math.max(8, (b.steps / maxSteps) * 100)) : 0,
+      }));
+    }
+
+    // Month view: 4 weekly breakdown buckets
+    const monthBuckets = [
+      { time: "W1", steps: 0 },
+      { time: "W2", steps: 0 },
+      { time: "W3", steps: 0 },
+      { time: "W4", steps: 0 },
+    ];
+
+    const [y, m, d] = todayDateId.split("-").map(Number);
+    const todayDate = y && m && d ? new Date(y, m - 1, d) : new Date();
+    const [sy, sm, sd] = monthStartDateId.split("-").map(Number);
+    const cursor = sy && sm && sd ? new Date(sy, sm - 1, sd) : new Date(todayDate);
+
+    while (cursor <= todayDate) {
+      const cStr = formatDateStr(cursor);
+      const dayOfMonth = cursor.getDate();
+      let daySteps = 0;
+      if (cStr === todayDateId) {
+        let loggedToday = 0;
+        todayWalkingLogs.forEach((l) => {
+          if (l.steps) loggedToday += Number(l.steps);
+        });
+        daySteps = Math.max(todaySensor, loggedToday);
+      } else {
+        const histSteps = userFirestoreDailySteps[cStr] || 0;
+        const dayWorkouts = periodWorkouts.filter((l) => l.date === cStr && matchesActivity(l, "walking"));
+        let logged = 0;
+        dayWorkouts.forEach((w) => {
+          if (w.steps) logged += Number(w.steps);
+        });
+        daySteps = Math.max(histSteps, logged);
+      }
+
+      const wIdx = Math.min(3, Math.floor((dayOfMonth - 1) / 7));
+      monthBuckets[wIdx].steps += daySteps;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    const maxSteps = Math.max(...monthBuckets.map((b) => b.steps), 1000);
+    return monthBuckets.map((b) => ({
       time: b.time,
       steps: b.steps,
       pct: b.steps > 0 ? Math.min(100, Math.max(8, (b.steps / maxSteps) * 100)) : 0,
     }));
-  }, [todayWalkingLogs, hardwareStepCount, liveStepCount, realtimeStepCount]);
+  }, [period, todayWalkingLogs, hardwareStepCount, liveStepCount, realtimeStepCount, totalDailySteps, todayDateId, weekStartDateId, monthStartDateId, userFirestoreDailySteps, periodWorkouts]);
 
   const handleOpenActivity = (id: string) => {
-    Haptics.selectionAsync().catch(() => {});
+    Haptics.selectionAsync().catch(() => { });
     setSelectedActivityId(id);
     setPeriod("today");
   };
 
   const handleBackToOverview = () => {
-    Haptics.selectionAsync().catch(() => {});
+    Haptics.selectionAsync().catch(() => { });
     setSelectedActivityId(null);
   };
 
   const handlePeriodChange = (p: PeriodType) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
     setPeriod(p);
   };
 
   const handleStartWorkout = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => { });
     if (selectedActivityId && currentConfig) {
       router.push({
         pathname: "/log-exercise-details",
@@ -1157,9 +1658,15 @@ export default function ActivityScreen() {
           {/* Secondary Section: Step Count vs Time OR Calories Burned Breakdown */}
           {isWalking ? (
             <View style={styles.breakdownCard}>
-              <Text style={styles.breakdownCardTitle}>Step Count vs Time</Text>
+              <Text style={styles.breakdownCardTitle}>
+                {period === "today"
+                  ? "Step Count vs Time"
+                  : period === "week"
+                  ? "Daily Steps This Week"
+                  : "Weekly Steps This Month"}
+              </Text>
 
-              {/* Hourly Step Chart */}
+              {/* Step Chart */}
               <View style={styles.chartContainer}>
                 <View style={styles.chartYAxis}>
                   <Text style={styles.chartYLabel}>Max</Text>
@@ -1175,7 +1682,7 @@ export default function ActivityScreen() {
 
                   {/* Bars */}
                   <View style={styles.chartBarsRow}>
-                    {hourlySteps.map((step, idx) => (
+                    {walkingChartData.map((step, idx) => (
                       <View key={idx} style={styles.chartBarCol}>
                         <View style={styles.chartTripleBars}>
                           <View
@@ -1278,21 +1785,6 @@ export default function ActivityScreen() {
               </View>
             </View>
           )}
-
-          {/* Quick Action Log CTA */}
-          <TouchableOpacity
-            style={[
-              styles.startWorkoutButton,
-              { backgroundColor: currentConfig.color },
-            ]}
-            onPress={handleStartWorkout}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="play" size={18} color="#FFFFFF" />
-            <Text style={styles.startWorkoutButtonText}>
-              Log {currentConfig.name} Workout
-            </Text>
-          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
@@ -1303,6 +1795,9 @@ export default function ActivityScreen() {
     <SafeAreaView style={styles.safeContainer} edges={["top", "left", "right"]}>
       {/* App Header with profile avatar, welcome back, and bell icon */}
       <HomeHeader />
+
+      {/* Days and date calendar bar directly below user's name/header matching home tab */}
+      <WeeklyCalendar selectedDateId={selectedDateId} onDateSelect={setSelectedDateId} />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -1346,14 +1841,16 @@ export default function ActivityScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Today's Activity Card */}
+        {/* Activity Card */}
         <View style={styles.todayCard}>
           <View style={styles.todayCardHeader}>
             <View style={styles.todayCardTitleRow}>
-              <Text style={styles.todayCardTitle}>{"Today's Activity"}</Text>
+              <Text style={styles.todayCardTitle}>
+                {isSelectedToday ? "Today's Activity" : "Daily Activity"}
+              </Text>
             </View>
             <View style={styles.todayCardHeaderRight}>
-              <Text style={styles.todayCardDate}>{formattedToday}</Text>
+              <Text style={styles.todayCardDate}>{formattedSelectedDate}</Text>
             </View>
           </View>
 
@@ -1399,7 +1896,7 @@ export default function ActivityScreen() {
               </View>
               <Text style={styles.gaugeStepsLabel}>Steps</Text>
               <Text style={styles.gaugeStepsNumber}>
-                {summarySteps.toLocaleString()}
+                {displayedSteps.toLocaleString()}
               </Text>
               <Text style={styles.gaugeGoalText}>
                 / {summaryGoal.toLocaleString()}
@@ -1408,7 +1905,7 @@ export default function ActivityScreen() {
           </View>
 
           {/* Live Sensor Motion Indicator */}
-          {isPedometerAvailable && (
+          {isSelectedToday && isPedometerAvailable && (
             <View style={styles.sensorStatusRow}>
               <View style={styles.sensorStatusDot} />
               <Text style={styles.sensorStatusText}>
@@ -1425,7 +1922,7 @@ export default function ActivityScreen() {
                 <Ionicons name="flame" size={16} color="#F59E0B" />
               </View>
               <Text style={styles.todayStatColLabel}>Calories Burned</Text>
-              <Text style={styles.todayStatColValue}>{summaryCalories} cal</Text>
+              <Text style={styles.todayStatColValue}>{displayedCalories} cal</Text>
             </View>
 
             <View style={styles.todayStatDivider} />
@@ -1436,7 +1933,7 @@ export default function ActivityScreen() {
                 <Ionicons name="location" size={16} color="#06B6D4" />
               </View>
               <Text style={styles.todayStatColLabel}>Distance</Text>
-              <Text style={styles.todayStatColValue}>{summaryDistance} km</Text>
+              <Text style={styles.todayStatColValue}>{formattedDistance}</Text>
             </View>
 
             <View style={styles.todayStatDivider} />
@@ -1447,7 +1944,7 @@ export default function ActivityScreen() {
                 <Ionicons name="time" size={16} color="#3B82F6" />
               </View>
               <Text style={styles.todayStatColLabel}>Active Time</Text>
-              <Text style={styles.todayStatColValue}>{summaryActiveTime} min</Text>
+              <Text style={styles.todayStatColValue}>{formattedActiveTime}</Text>
             </View>
           </View>
         </View>
@@ -1502,6 +1999,213 @@ export default function ActivityScreen() {
                 </TouchableOpacity>
               );
             })}
+          </View>
+        </View>
+
+        {/* ── LEADERBOARD SECTION ── */}
+        <View style={styles.leaderboardSection}>
+          <View style={styles.leaderboardHeaderRow}>
+            <View style={styles.leaderboardTitleGroup}>
+              <View style={styles.trophyIconBadge}>
+                <Ionicons name="trophy" size={18} color="#F59E0B" />
+              </View>
+              <View>
+                <Text style={styles.leaderboardTitle}>Steps Leaderboard</Text>
+                <Text style={styles.leaderboardSubtitle}>
+                  {isSelectedToday ? "Ranked by today's highest steps" : `Ranked by steps on ${formattedSelectedDate}`}
+                </Text>
+              </View>
+            </View>
+
+            {/* Filter Toggle: All vs Connected */}
+            <View style={styles.filterPillGroup}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[
+                  styles.lbFilterPill,
+                  leaderboardFilter === "all" && styles.lbFilterPillActive,
+                ]}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setLeaderboardFilter("all");
+                }}
+              >
+                <Text
+                  style={[
+                    styles.lbFilterPillText,
+                    leaderboardFilter === "all" && styles.lbFilterPillTextActive,
+                  ]}
+                >
+                  All
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[
+                  styles.lbFilterPill,
+                  leaderboardFilter === "connected" && styles.lbFilterPillActive,
+                ]}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setLeaderboardFilter("connected");
+                }}
+              >
+                <Text
+                  style={[
+                    styles.lbFilterPillText,
+                    leaderboardFilter === "connected" && styles.lbFilterPillTextActive,
+                  ]}
+                >
+                  Friends
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Leaderboard List */}
+          <View style={styles.leaderboardCard}>
+            {(() => {
+              const filtered = leaderboardUsers.filter((u) => {
+                if (leaderboardFilter === "connected") {
+                  return u.isCurrentUser || u.connectedVia.length > 0;
+                }
+                return true;
+              });
+
+              const hasAnySteps = filtered.some((u) => u.steps > 0);
+
+              if (filtered.length === 0 || (!hasAnySteps && selectedDateId > todayDateId)) {
+                return (
+                  <View style={styles.leaderboardEmptyBox}>
+                    <Ionicons name="footsteps-outline" size={32} color={Colors.dark.textSecondary} />
+                    <Text style={styles.leaderboardEmptyTitle}>No Steps Recorded</Text>
+                    <Text style={styles.leaderboardEmptySub}>
+                      {selectedDateId > todayDateId
+                        ? "Steps will be tracked automatically when this day arrives."
+                        : "No activity has been recorded yet for this date."}
+                    </Text>
+                  </View>
+                );
+              }
+
+              return filtered.map((u, idx) => {
+                const rank = idx + 1;
+                const isTop1 = rank === 1;
+                const isTop2 = rank === 2;
+                const isTop3 = rank === 3;
+
+                return (
+                  <View
+                    key={u.id}
+                    style={[
+                      styles.leaderboardRow,
+                      u.isCurrentUser && styles.leaderboardRowMe,
+                      idx > 0 && styles.leaderboardRowBorder,
+                    ]}
+                  >
+                    {/* Rank Badge */}
+                    <View style={styles.rankContainer}>
+                      {isTop1 ? (
+                        <View style={[styles.medalBadge, { backgroundColor: "#FEF08A" }]}>
+                          <Ionicons name="ribbon" size={14} color="#B45309" />
+                        </View>
+                      ) : isTop2 ? (
+                        <View style={[styles.medalBadge, { backgroundColor: "#E2E8F0" }]}>
+                          <Ionicons name="ribbon" size={14} color="#64748B" />
+                        </View>
+                      ) : isTop3 ? (
+                        <View style={[styles.medalBadge, { backgroundColor: "#FFEDD5" }]}>
+                          <Ionicons name="ribbon" size={14} color="#C2410C" />
+                        </View>
+                      ) : (
+                        <Text style={styles.rankNumberText}>{rank}</Text>
+                      )}
+                    </View>
+
+                    {/* User Avatar */}
+                    <View style={styles.leaderboardAvatarWrapper}>
+                      {u.avatar ? (
+                        <Image source={{ uri: u.avatar }} style={styles.leaderboardAvatarImg} />
+                      ) : (
+                        <View style={styles.leaderboardAvatarFallback}>
+                          <Text style={styles.leaderboardAvatarInitial}>
+                            {u.name.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* User Details & Connected Social Badges */}
+                    <View style={styles.leaderboardInfoCol}>
+                      <View style={styles.leaderboardNameRow}>
+                        <Text
+                          style={[
+                            styles.leaderboardName,
+                            u.isCurrentUser && styles.leaderboardNameMe,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {u.name}
+                        </Text>
+                        {u.isCurrentUser && (
+                          <View style={styles.meTagBadge}>
+                            <Text style={styles.meTagText}>YOU</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* Connected Social Apps Badges */}
+                      <View style={styles.connectedAppsRow}>
+                        {u.connectedVia && u.connectedVia.length > 0 ? (
+                          u.connectedVia.map((app, appIdx) => {
+                            if (app === "gmail" || app === "google") {
+                              return (
+                                <View key={appIdx} style={styles.socialBadgeGmail}>
+                                  <Ionicons name="mail" size={10} color="#EA4335" />
+                                  <Text style={styles.socialBadgeText}>Gmail</Text>
+                                </View>
+                              );
+                            }
+                            if (app === "facebook") {
+                              return (
+                                <View key={appIdx} style={styles.socialBadgeFacebook}>
+                                  <Ionicons name="logo-facebook" size={10} color="#1877F2" />
+                                  <Text style={styles.socialBadgeText}>Facebook</Text>
+                                </View>
+                              );
+                            }
+                            if (app === "instagram") {
+                              return (
+                                <View key={appIdx} style={styles.socialBadgeInstagram}>
+                                  <Ionicons name="logo-instagram" size={10} color="#E4405F" />
+                                  <Text style={styles.socialBadgeText}>Instagram</Text>
+                                </View>
+                              );
+                            }
+                            return (
+                              <View key={appIdx} style={styles.socialBadgeOther}>
+                                <Ionicons name="people" size={10} color="#10B981" />
+                                <Text style={styles.socialBadgeText}>{app}</Text>
+                              </View>
+                            );
+                          })
+                        ) : (
+                          <Text style={styles.connectedAppNone}>Arogya Member</Text>
+                        )}
+                      </View>
+                    </View>
+
+                    {/* Step Count */}
+                    <View style={styles.leaderboardStepCol}>
+                      <Text style={styles.leaderboardStepNumber}>
+                        {u.steps.toLocaleString()}
+                      </Text>
+                      <Text style={styles.leaderboardStepUnit}>steps</Text>
+                    </View>
+                  </View>
+                );
+              });
+            })()}
           </View>
         </View>
       </ScrollView>
@@ -2284,6 +2988,239 @@ const styles = StyleSheet.create({
   },
   sportModalCancelText: {
     fontSize: 14,
+    color: Colors.dark.textMuted,
+  },
+
+  // ── LEADERBOARD SECTION ───────────────────────────────────────────────────
+  leaderboardSection: {
+    marginTop: 22,
+    marginBottom: 8,
+  },
+  leaderboardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  leaderboardTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  trophyIconBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  leaderboardTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: Colors.dark.text,
+  },
+  leaderboardSubtitle: {
+    fontSize: 11,
+    color: Colors.dark.textMuted,
+  },
+  filterPillGroup: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderRadius: 16,
+    padding: 3,
+    gap: 4,
+  },
+  lbFilterPill: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 13,
+  },
+  lbFilterPillActive: {
+    backgroundColor: Colors.dark.primary,
+  },
+  lbFilterPillText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: Colors.dark.textSecondary,
+  },
+  lbFilterPillTextActive: {
+    color: "#0D1117",
+    fontWeight: "700",
+  },
+  leaderboardCard: {
+    backgroundColor: "#161B22",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+    overflow: "hidden",
+  },
+  leaderboardEmptyBox: {
+    paddingVertical: 32,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  leaderboardEmptyTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: Colors.dark.text,
+    marginTop: 10,
+  },
+  leaderboardEmptySub: {
+    fontSize: 12,
+    color: Colors.dark.textSecondary,
+    textAlign: "center",
+    marginTop: 4,
+    lineHeight: 18,
+  },
+  leaderboardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  leaderboardRowMe: {
+    backgroundColor: "rgba(16, 185, 129, 0.08)",
+  },
+  leaderboardRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.04)",
+  },
+  rankContainer: {
+    width: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  medalBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rankNumberText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: Colors.dark.textMuted,
+  },
+  leaderboardAvatarWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: "hidden",
+    marginRight: 10,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  leaderboardAvatarImg: {
+    width: "100%",
+    height: "100%",
+  },
+  leaderboardAvatarFallback: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#21262D",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  leaderboardAvatarInitial: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: Colors.dark.primary,
+  },
+  leaderboardInfoCol: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  leaderboardNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  leaderboardName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.dark.text,
+  },
+  leaderboardNameMe: {
+    color: "#10B981",
+    fontWeight: "700",
+  },
+  meTagBadge: {
+    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+  },
+  meTagText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#10B981",
+  },
+  connectedAppsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 3,
+  },
+  socialBadgeGmail: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(234, 67, 53, 0.12)",
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  socialBadgeFacebook: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(24, 119, 242, 0.12)",
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  socialBadgeInstagram: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(228, 64, 95, 0.12)",
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  socialBadgeOther: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(16, 185, 129, 0.12)",
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  socialBadgeText: {
+    fontSize: 9,
+    fontWeight: "600",
+    color: Colors.dark.textSecondary,
+  },
+  connectedAppNone: {
+    fontSize: 10,
+    color: Colors.dark.textMuted,
+  },
+  leaderboardStepCol: {
+    alignItems: "flex-end",
+    marginLeft: 8,
+  },
+  leaderboardStepNumber: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: Colors.dark.text,
+  },
+  leaderboardStepUnit: {
+    fontSize: 10,
     color: Colors.dark.textMuted,
   },
 });
