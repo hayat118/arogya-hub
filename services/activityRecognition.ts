@@ -68,31 +68,33 @@ export function classifyActivity(
   let confidence = 0.5;
 
   // 1. If footsteps are detected in recent window, it CANNOT be cycling or stationary.
-  if (cadence >= CADENCE_RUN_MIN || (recentStepsCount >= 18 && mean >= 0.25)) {
+  if (cadence >= CADENCE_RUN_MIN || (recentStepsCount >= 14 && mean >= 0.22)) {
     activity = "running";
     confidence = Math.min(0.95, 0.80 + (cadence - CADENCE_RUN_MIN) / 200);
-  } else if (cadence >= 35 || recentStepsCount >= 3) {
-    // Normal or gentle walking
+  } else if (cadence >= 25 || recentStepsCount >= 2 || (mean >= 0.12 && peak >= 0.35 && std >= 0.10)) {
+    // Normal, casual or gentle walking
     activity = "walking";
-    confidence = Math.min(0.95, 0.70 + Math.min(0.25, recentStepsCount * 0.04));
+    confidence = Math.min(0.95, 0.70 + Math.min(0.25, recentStepsCount * 0.05));
   } else if (peak >= SPORT_PEAK_MIN && std >= SPORT_STD_MIN) {
     activity = "sport";
     confidence = Math.min(0.85, 0.55 + (peak - SPORT_PEAK_MIN) * 0.15);
   } else if (
     recentStepsCount === 0 &&
     cadence === 0 &&
-    mean >= 0.08 &&
-    mean <= CYCLING_MEAN_MAG_MAX &&
-    std <= 0.18
+    mean >= 0.05 &&
+    mean <= 0.25 &&
+    std >= 0.02 &&
+    std <= 0.10 &&
+    peak < 0.45
   ) {
-    // Strict cycling condition: ZERO steps detected + very smooth micro-vibrations
+    // Strict cycling condition: ZERO steps detected + high-frequency smooth road micro-vibrations with very low deviation
     activity = "cycling";
     confidence = 0.60;
   } else if (mean < STILL_MAGNITUDE && recentStepsCount === 0) {
     activity = "stationary";
     confidence = 0.85;
   } else {
-    // Unknown or brief movement without continuous cadence
+    // Low movement or brief adjustment without continuous cadence
     activity = mean > STILL_MAGNITUDE ? "unknown" : "stationary";
     confidence = 0.40;
   }

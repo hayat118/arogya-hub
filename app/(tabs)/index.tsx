@@ -6,6 +6,8 @@ import { addDoc, collection, deleteDoc, doc, onSnapshot, query, setDoc, where } 
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
+  type AppStateStatus,
   Image,
   Modal,
   ScrollView,
@@ -18,8 +20,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle } from "react-native-svg";
 import HomeHeader from "../../components/HomeHeader";
-import WeeklyCalendar from "../../components/WeeklyCalendar";
 import NonTodayLogModal from "../../components/NonTodayLogModal";
+import WeeklyCalendar from "../../components/WeeklyCalendar";
 import Colors from "../../constants/Colors";
 import { db } from "../../services/firebase";
 import { calculateFallbackTargets } from "../../services/gemini";
@@ -95,6 +97,43 @@ export default function Dashboard() {
     }
     saveActiveDate();
   }, [selectedDateId]);
+
+  // Synchronize daily activity burned calories (from pedometer, steps & real-time sensor tracking)
+  const [activityBurnedCalories, setActivityBurnedCalories] = useState<number>(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadActivityCalories() {
+      try {
+        const calKey = user?.id
+          ? `daily_calories_burned_${user.id}_${selectedDateId}`
+          : `daily_calories_burned_guest_${selectedDateId}`;
+        const stored = await AsyncStorage.getItem(calKey);
+        if (stored && isMounted) {
+          const parsed = parseInt(stored, 10);
+          if (!isNaN(parsed) && parsed >= 0) {
+            setActivityBurnedCalories(parsed);
+          }
+        } else if (isMounted) {
+          setActivityBurnedCalories(0);
+        }
+      } catch { }
+    }
+
+    loadActivityCalories();
+
+    // Check periodically and when app state becomes active so the ring updates automatically
+    const interval = setInterval(loadActivityCalories, 3000);
+    const appSub = AppState.addEventListener("change", (state: AppStateStatus) => {
+      if (state === "active") loadActivityCalories();
+    });
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      appSub.remove();
+    };
+  }, [user?.id, selectedDateId]);
 
   // 2. Load user targets & physical profile stats from onboarding data
   useEffect(() => {
@@ -369,9 +408,12 @@ export default function Dashboard() {
     .filter((log) => log.type === "meal")
     .reduce((sum, log) => sum + (log.calories || 0), 0);
 
-  const burnedCalories = logs
+  const loggedWorkoutCalories = logs
     .filter((log) => log.type === "workout")
     .reduce((sum, log) => sum + (log.calories || 0), 0);
+
+  // Total burned calories combines logged workouts and real-time steps/activity burned calories
+  const burnedCalories = Math.max(loggedWorkoutCalories, activityBurnedCalories);
 
   const netCalories = Math.max(0, consumedCalories - burnedCalories);
 
@@ -527,15 +569,6 @@ export default function Dashboard() {
                 <Text style={styles.ringTargetGoalText}>Goal: {targetBurned} cal</Text>
               </View>
             </View>
-
-            {/* Net Energy Summary Row */}
-            <View style={styles.netEnergyBanner}>
-              <Ionicons name="flash-outline" size={14} color={Colors.dark.primary} />
-              <Text style={styles.netEnergyText}>
-                Net Energy: <Text style={{ color: Colors.dark.text, fontWeight: "bold" }}>{netCalories} cal</Text> ({consumedCalories} Eaten - {burnedCalories} Burned)
-              </Text>
-            </View>
-
             {/* Calorie Fulfillment & Overage Warnings */}
             {consumedCalories >= targetCalories && targetCalories > 0 && (
               <View style={styles.calorieStatusContainer}>

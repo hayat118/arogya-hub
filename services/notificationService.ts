@@ -1,5 +1,6 @@
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import { Platform } from "react-native";
 import {
   getAdminNotificationSettings,
@@ -17,6 +18,11 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// Check if running inside Expo Go client app
+export const isExpoGo =
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+  Constants.appOwnership === "expo";
+
 /**
  * Registers the device for push notifications, requests necessary permissions,
  * and saves the Expo push token to Firestore if user ID is provided.
@@ -25,12 +31,23 @@ export async function registerForPushNotificationsAsync(userId?: string): Promis
   let token: string | null = null;
 
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("default", {
-      name: "Default & Activity Reminders",
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#10B981",
-    });
+    try {
+      await Notifications.setNotificationChannelAsync("default", {
+        name: "Default & Activity Reminders",
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: "#10B981",
+      });
+    } catch {}
+  }
+
+  // Push notifications (remote FCM notifications) on Android were removed from Expo Go in SDK 53+.
+  // They require a development build (`npx expo run:android` or EAS build).
+  if (isExpoGo && Platform.OS === "android") {
+    console.info(
+      "Notice: Remote push notifications on Android require a Development Build (SDK 53+). Local reminders will still function normally."
+    );
+    return null;
   }
 
   if (!Device.isDevice) {
@@ -51,9 +68,20 @@ export async function registerForPushNotificationsAsync(userId?: string): Promis
       return null;
     }
 
-    // Get Expo push token
-    const pushTokenData = await Notifications.getExpoPushTokenAsync().catch((err) => {
-      console.warn("Could not retrieve Expo Push Token:", err);
+    // Get EAS Project ID from Expo config
+    const projectId =
+      Constants.expoConfig?.extra?.eas?.projectId ??
+      Constants.easConfig?.projectId ??
+      "a8c4e631-3c52-49cd-83f5-d77f66ac2c03";
+
+    // Get Expo push token safely
+    const pushTokenData = await Notifications.getExpoPushTokenAsync({
+      projectId,
+    }).catch((err) => {
+      // Suppress noisy Expo Go deprecation warnings
+      if (!isExpoGo) {
+        console.warn("Could not retrieve Expo Push Token:", err);
+      }
       return null;
     });
 
@@ -65,7 +93,9 @@ export async function registerForPushNotificationsAsync(userId?: string): Promis
       }
     }
   } catch (error) {
-    console.error("Error during push notification registration:", error);
+    if (!isExpoGo) {
+      console.error("Error during push notification registration:", error);
+    }
   }
 
   return token;
@@ -100,10 +130,10 @@ export async function scheduleAutomatedMealAndActivityReminders(
         data: { type: "lunch_reminder" },
       },
       trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: adminSettings.lunchHour ?? 13,
         minute: adminSettings.lunchMinute ?? 0,
-        repeats: true,
-      } as any,
+      },
     });
 
     // 4. Schedule Afternoon Activity & Hydration Check (Default: 4:30 PM / 16:30)
@@ -115,10 +145,10 @@ export async function scheduleAutomatedMealAndActivityReminders(
         data: { type: "afternoon_reminder" },
       },
       trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: adminSettings.afternoonHour ?? 16,
         minute: adminSettings.afternoonMinute ?? 30,
-        repeats: true,
-      } as any,
+      },
     });
 
     // 5. Schedule Dinner Reminder (Default: 8:00 PM / 20:00)
@@ -130,10 +160,10 @@ export async function scheduleAutomatedMealAndActivityReminders(
         data: { type: "dinner_reminder" },
       },
       trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: adminSettings.dinnerHour ?? 20,
         minute: adminSettings.dinnerMinute ?? 0,
-        repeats: true,
-      } as any,
+      },
     });
 
     // 6. Schedule Daily Inactivity / Logging Encouragement (Default: 9:00 PM / 21:00)
@@ -145,10 +175,10 @@ export async function scheduleAutomatedMealAndActivityReminders(
         data: { type: "inactivity_reminder" },
       },
       trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: adminSettings.inactivityHour ?? 21,
         minute: adminSettings.inactivityMinute ?? 0,
-        repeats: true,
-      } as any,
+      },
     });
 
     // 7. Targeted Notification for Unsubscribed Users / Paid Plan Encouragement (Default: 10:00 AM)
@@ -161,10 +191,10 @@ export async function scheduleAutomatedMealAndActivityReminders(
           data: { type: "subscription_encouragement" },
         },
         trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
           hour: adminSettings.unsubscribedHour ?? 10,
           minute: adminSettings.unsubscribedMinute ?? 0,
-          repeats: true,
-        } as any,
+        },
       });
     }
 

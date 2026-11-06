@@ -4,7 +4,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import React, { useEffect, useState, useCallback } from "react";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Dimensions,
@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { BarChart, LineChart } from "react-native-chart-kit";
 import { SafeAreaView } from "react-native-safe-area-context";
+import HomeHeader from "../../components/HomeHeader";
 import Colors from "../../constants/Colors";
 import { db, updateUserProfile } from "../../services/firebase";
 import {
@@ -48,7 +49,22 @@ interface DayStreakInfo {
 }
 
 export default function Analytics() {
+  const router = useRouter();
   const { user } = useUser();
+
+  // Helper to format date YYYY-MM-DD
+  const formatDateStr = (date: Date): string => {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const todayDateId = formatDateStr(new Date());
+
+  // Activity & steps calories sync across Home & Activity tabs
+  const [activityBurnedMap, setActivityBurnedMap] = useState<Record<string, number>>({});
+  const [firestoreDailyStepsMap, setFirestoreDailyStepsMap] = useState<Record<string, number>>({});
 
   // Profile stats state
   const [profileWeight, setProfileWeight] = useState<string>("70");
@@ -78,13 +94,6 @@ export default function Analytics() {
   const [bentoData, setBentoData] = useState<BentoGridData | null>(null);
   const [isBentoLoading, setIsBentoLoading] = useState<boolean>(false);
 
-  // Helper to format date YYYY-MM-DD
-  const formatDateStr = (date: Date): string => {
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, "0");
-    const dd = String(date.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  };
 
   // Helper to normalize any date input (string, Timestamp, Date object, or epoch) to YYYY-MM-DD
   const normalizeDateStr = (raw: any): string => {
@@ -215,28 +224,55 @@ export default function Analytics() {
     // Set initial week dates so UI renders immediately
     setWeekDays(weekDates);
 
-    const processLogsAndSetState = (logsArray: LogItem[]) => {
-      const activeDatesSet = new Set<string>();
-      logsArray.forEach((l) => {
-        const norm = normalizeDateStr(l.dateStr);
-        if (norm) {
-          activeDatesSet.add(norm);
+    // Sync daily calories burned from Activity & Home tabs for each day of the week
+    const syncActivityCalories = async () => {
+      try {
+        const calMap: Record<string, number> = {};
+        for (const wDay of weekDates) {
+          const calKey = user?.id
+            ? `daily_calories_burned_${user.id}_${wDay.dateStr}`
+            : `daily_calories_burned_guest_${wDay.dateStr}`;
+          const val = await AsyncStorage.getItem(calKey);
+          if (val) {
+            const num = parseInt(val, 10);
+            if (!isNaN(num) && num > 0) {
+              calMap[wDay.dateStr] = num;
+            }
+          }
         }
-      });
-
-      // Update active status for each day of the current week
-      const updatedWeek = weekDates.map((day) => ({
-        ...day,
-        hasActivity: activeDatesSet.has(day.dateStr),
-      }));
-
-      setWeekDays(updatedWeek);
-      setWeeklyLogs(logsArray);
-
-      // Calculate streak days count matching current week active days
-      const currentWeekActiveCount = updatedWeek.filter((day) => day.hasActivity).length;
-      setCurrentStreakCount(currentWeekActiveCount);
+        setActivityBurnedMap(calMap);
+      } catch (e) {
+        console.warn("Failed to sync activity calories in analytics:", e);
+      }
     };
+    syncActivityCalories();
+
+    // Subscribe to current user's Firestore document to get synchronized dailySteps map
+    const userDocRef = doc(db, "users", user.id);
+    const userDocUnsub = onSnapshot(
+      userDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const uData = docSnap.data();
+          if (uData?.dailySteps && typeof uData.dailySteps === "object") {
+            setFirestoreDailyStepsMap(uData.dailySteps);
+          }
+        }
+      },
+      (err) => console.warn("Analytics user dailySteps listener error:", err)
+    );
+
+    // Initial load from local cache for offline resilience
+    AsyncStorage.getItem(`user_logs_${user.id}`)
+      .then((stored) => {
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) setWeeklyLogs(parsed);
+          } catch (e) { }
+        }
+      })
+      .catch(() => { });
 
     // Subscribe to Firebase logs collection for this user
     const logsRef = collection(db, "users", user.id, "logs");
@@ -264,26 +300,132 @@ export default function Analytics() {
 
         // Persist to local cache for offline resilience
         AsyncStorage.setItem(`user_logs_${user.id}`, JSON.stringify(fetchedLogs)).catch(() => { });
-        processLogsAndSetState(fetchedLogs);
+        setWeeklyLogs(fetchedLogs);
       },
       (err) => {
         console.error("Firebase analytics logs listener error:", err);
-        // Fallback to local storage if Firestore permissions or network fail
-        AsyncStorage.getItem(`user_logs_${user.id}`)
-          .then((stored) => {
-            if (stored) {
-              try {
-                const parsed = JSON.parse(stored);
-                processLogsAndSetState(parsed);
-              } catch (e) { }
-            }
-          })
-          .catch(() => { });
       }
     );
 
-    return () => unsub();
+    return () => {
+      unsub();
+      userDocUnsub();
+    };
   }, [user]);
+
+  // Periodic and focus-based sync of daily activity calories across all days in the week
+  const syncWeekActivityCalories = useCallback(async () => {
+    if (weekDays.length === 0) return;
+    try {
+      const calMap: Record<string, number> = {};
+      for (const wDay of weekDays) {
+        const calKey = user?.id
+          ? `daily_calories_burned_${user.id}_${wDay.dateStr}`
+          : `daily_calories_burned_guest_${wDay.dateStr}`;
+        const stepKey = user?.id
+          ? `daily_steps_${user.id}_${wDay.dateStr}`
+          : `daily_steps_guest_${wDay.dateStr}`;
+
+        const [valCal, valSteps] = await Promise.all([
+          AsyncStorage.getItem(calKey),
+          AsyncStorage.getItem(stepKey),
+        ]);
+
+        let totalForDay = 0;
+        if (valCal) {
+          const num = parseInt(valCal, 10);
+          if (!isNaN(num) && num > 0) totalForDay = Math.max(totalForDay, num);
+        }
+        if (valSteps) {
+          const numS = parseInt(valSteps, 10);
+          if (!isNaN(numS) && numS > 0) {
+            totalForDay = Math.max(totalForDay, Math.round(numS * 0.04));
+          }
+        }
+        if (totalForDay > 0) {
+          calMap[wDay.dateStr] = totalForDay;
+        }
+      }
+      setActivityBurnedMap((prev) => ({ ...prev, ...calMap }));
+    } catch (e) {
+      console.warn("Failed to sync week activity calories:", e);
+    }
+  }, [weekDays, user?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      syncWeekActivityCalories();
+    }, [syncWeekActivityCalories])
+  );
+
+  useEffect(() => {
+    syncWeekActivityCalories();
+    const interval = setInterval(syncWeekActivityCalories, 4000);
+    return () => clearInterval(interval);
+  }, [syncWeekActivityCalories]);
+
+  // 3. Reactively update Week Checklist and calculate true Daily Streak
+  useEffect(() => {
+    if (weekDays.length === 0) return;
+
+    // Collect all dates that have recorded activity (logs, steps, or activity calories)
+    const activeDatesSet = new Set<string>();
+
+    weeklyLogs.forEach((l) => {
+      const norm = normalizeDateStr(l.dateStr);
+      if (norm) activeDatesSet.add(norm);
+    });
+
+    Object.keys(firestoreDailyStepsMap).forEach((d) => {
+      if ((firestoreDailyStepsMap[d] || 0) > 0) activeDatesSet.add(d);
+    });
+
+    Object.keys(activityBurnedMap).forEach((d) => {
+      if ((activityBurnedMap[d] || 0) > 0) activeDatesSet.add(d);
+    });
+
+    // Update current week checklist (Mon - Sun)
+    const updatedWeek = weekDays.map((day) => ({
+      ...day,
+      hasActivity: activeDatesSet.has(day.dateStr),
+    }));
+
+    setWeekDays((prev) => {
+      const hasChanged = prev.some((d, idx) => d.hasActivity !== updatedWeek[idx].hasActivity);
+      return hasChanged ? updatedWeek : prev;
+    });
+
+    // Calculate real consecutive daily streak ending today or yesterday
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = formatDateStr(today);
+
+    let streak = 0;
+    let checkDate = new Date(today);
+
+    // If today is active, streak counts back starting today. If not yet active today, check starting yesterday
+    const isTodayActive = activeDatesSet.has(todayStr);
+    if (!isTodayActive) {
+      checkDate.setDate(checkDate.getDate() - 1);
+    }
+
+    // Count consecutive active days backwards (up to 365 days)
+    for (let i = 0; i < 365; i++) {
+      const dateKey = formatDateStr(checkDate);
+      if (activeDatesSet.has(dateKey)) {
+        streak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+
+    // Fallback: if streak is 0 but there is activity during the current week, at least count this week's active days
+    const weekActiveCount = updatedWeek.filter((d) => d.hasActivity).length;
+    const finalStreak = streak > 0 ? streak : weekActiveCount;
+
+    setCurrentStreakCount(finalStreak);
+  }, [weeklyLogs, firestoreDailyStepsMap, activityBurnedMap]);
 
   // Handle Save Weight, Target Weight & Goal Update
   const handleSaveWeight = async () => {
@@ -476,9 +618,11 @@ export default function Analytics() {
   const chartDayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   const dailyBurnedCals = calorieWeekDays.map((day) => {
-    return weeklyLogs
+    const loggedCals = weeklyLogs
       .filter((l) => l.type === "workout" && l.dateStr === day.dateStr)
       .reduce((sum, l) => sum + (l.calories || 0), 0);
+    const activityCals = activityBurnedMap[day.dateStr] || 0;
+    return Math.max(loggedCals, activityCals);
   });
 
   const dailyConsumedCals = calorieWeekDays.map((day) => {
@@ -659,8 +803,9 @@ export default function Analytics() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header Section with Big 'Progress' Title */}
+        {/* Header Section */}
         <SafeAreaView edges={["top"]} style={styles.safeHeader}>
+          <HomeHeader />
           <View style={styles.headerContainer}>
             <Text style={styles.pageHeading}>Progress</Text>
             <Text style={styles.pageSubtitle}>
@@ -1505,11 +1650,12 @@ const styles = StyleSheet.create({
     paddingBottom: 110,
   },
   safeHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
+    backgroundColor: Colors.dark.background,
   },
   headerContainer: {
-    marginBottom: 16,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    marginBottom: 8,
   },
   pageHeading: {
     color: Colors.dark.text,
@@ -1524,6 +1670,7 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     paddingHorizontal: 20,
+    paddingTop: 8,
   },
   cardsRow: {
     flexDirection: "row",
